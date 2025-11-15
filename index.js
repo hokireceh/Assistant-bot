@@ -57,15 +57,26 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 });
 
 const OWNER_ID = parseInt(process.env.OWNER_ID);
-const ADMINS_FILE = path.join(__dirname, 'admins.json');
 const FILTERS_FILE = path.join(__dirname, 'filters.json');
 const BLACKLIST_FILE = path.join(__dirname, 'blacklist.json');
 
+// Load admins from .env (comma-separated IDs)
+// Format: ADMIN_IDS=1170158500,123456789,987654321
+const loadAdminsFromEnv = () => {
+  const adminIds = process.env.ADMIN_IDS || '';
+  if (!adminIds.trim()) {
+    return [OWNER_ID]; // Default: hanya owner
+  }
+  return adminIds.split(',')
+    .map(id => parseInt(id.trim()))
+    .filter(id => !isNaN(id) && id > 0);
+};
+
 // In-memory cache
-let admins = [];
+let admins = loadAdminsFromEnv();
 let filters = {};
 let blacklist = []; // User IDs yang di-blacklist
-let adminCache = new Set();
+let adminCache = new Set(admins);
 let deleteTimers = new Map();
 let spamTimeouts = new Map(); // Track user timeouts
 
@@ -166,19 +177,15 @@ setInterval(() => {
 // Initialize data asynchronously
 async function initializeData() {
   try {
-    admins = await loadJSON(ADMINS_FILE, []);
+    // Load admins from .env (no more admins.json)
+    admins = loadAdminsFromEnv();
+    adminCache = new Set(admins);
+    
     filters = await loadJSON(FILTERS_FILE, {});
     blacklist = await loadJSON(BLACKLIST_FILE, []);
 
-    if (OWNER_ID && !admins.includes(OWNER_ID)) {
-      admins.push(OWNER_ID);
-      await saveJSON(ADMINS_FILE, admins);
-    }
-
-    // Build admin cache
-    adminCache = new Set(admins);
-    
     console.log('✅ Data initialized successfully');
+    console.log(`👑 Admin list (from .env): ${admins.join(', ')}`);
     console.log(`🤖 AI Hoki: ${AI_ENABLED ? 'ENABLED ✅' : 'DISABLED (GROQ_API_KEY not set)'}`);
   } catch (err) {
     console.error('❌ Initialization error:', err);
@@ -604,7 +611,7 @@ function createPaginationKeyboard(currentPage, totalPages, prefix) {
   return { inline_keyboard: keyboard };
 }
 
-// 📖 HELP & START COMMANDS
+// 📖 HELP & START COMMANDS (ADMIN ONLY)
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
@@ -613,10 +620,17 @@ bot.onText(/\/start/, async (msg) => {
 
   autoDeleteMessage(chatId, messageId, 3);
 
+  // ADMIN ONLY - Reject non-admin users
+  if (!isAdmin(userId)) {
+    const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
+    autoDeleteMessage(chatId, reply.message_id, 3);
+    return;
+  }
+
   const welcomeMsg = `👋 Halo *${firstName}*!\n\n` +
     `Gua bot admin & filter management.\n\n` +
     `🔹 Ketik /help untuk lihat semua command\n` +
-    `${isAdmin(userId) ? '🔹 Lu admin, bisa pake semua fitur! 👑' : '🔹 Lu bukan admin, cuma bisa pake filter'}`;
+    `🔹 Lu admin, bisa pake semua fitur! 👑`;
 
   const reply = await bot.sendMessage(chatId, welcomeMsg, {
     parse_mode: 'Markdown'
@@ -631,46 +645,45 @@ bot.onText(/\/help/, async (msg) => {
 
   autoDeleteMessage(chatId, messageId, 3);
 
+  // ADMIN ONLY - Reject non-admin users
+  if (!isAdmin(userId)) {
+    const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
+    autoDeleteMessage(chatId, reply.message_id, 3);
+    return;
+  }
+
   let helpMsg = `📖 *Daftar Command Bot*\n\n`;
 
-  if (isAdmin(userId)) {
-    helpMsg += `👑 *Admin Commands:*\n` +
-      `/addadmin - Tambah admin (reply ke orangnya)\n` +
-      `/removeadmin - Hapus admin (reply ke orangnya)\n` +
-      `/listadmins - Lihat semua admin\n\n` +
-      `🚫 *Security Commands:*\n` +
-      `/blacklist - Ban user (reply ke orangnya)\n` +
-      `/unblacklist - Unban user (reply ke orangnya)\n` +
-      `/listblacklist - Lihat user yang di-ban\n` +
-      `/timeout <menit> - Timeout user (reply)\n\n` +
-      `🎯 *Filter Management:*\n` +
-      `\`!add\` <nama> - Bikin filter baru (reply ke pesan)\n` +
-      `\`!del\` <nama> - Hapus filter\n` +
-      `\`!clone\` <dari> <ke> - Copy filter\n` +
-      `\`!rename\` <lama> <baru> - Ganti nama filter\n\n` +
-      `🔍 *Filter Info:*\n` +
-      `\`!list\` - Lihat semua filter\n` +
-      `\`!info\` <nama> - Detail filter\n` +
-      `\`!search\` <kata> - Cari filter\n` +
-      `\`!status\` - Status & statistik bot\n` +
-      `${isOwner(userId) ? '!export - Backup semua filter\n' : ''}` +
-      `\n💡 *Cara Pake Filter:*\n` +
-      `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
-      `${AI_ENABLED ? '🤖 *AI Hoki:*\nReply ke pesan bot untuk chat dengan Hoki!\n\n' : ''}` +
-      `🔔 *Notification System:*\n` +
-      `\`!notifstats\` - Lihat notification stats\n` +
-      `Auto welcome untuk member baru\n` +
-      `Daily stats dikirim ke owner setiap hari\n` +
-      `Alert otomatis untuk critical errors\n\n` +
-      `📌 *Media Support:*\n` +
-      `Text, Photo, Video, Document, GIF, Audio, Voice, Sticker\n\n` +
-      `✨ *Format Support:*\n` +
-      `Bold, Italic, Underline, Code, Link, dll`;
-  } else {
-    helpMsg += `💡 *Cara Pake Filter:*\n` +
-      `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
-      `📌 Lu bukan admin, cuma bisa pake filter yang udah ada.`;
-  }
+  helpMsg += `👑 *Admin Commands:*\n` +
+    `/listadmins - Lihat daftar admin\n\n` +
+    `🚫 *Security Commands:*\n` +
+    `/blacklist - Ban user (reply ke orangnya)\n` +
+    `/unblacklist - Unban user (reply ke orangnya)\n` +
+    `/listblacklist - Lihat user yang di-ban\n` +
+    `/timeout <menit> - Timeout user (reply)\n\n` +
+    `🎯 *Filter Management:*\n` +
+    `\`!add\` <nama> - Bikin filter baru (reply ke pesan)\n` +
+    `\`!del\` <nama> - Hapus filter\n` +
+    `\`!clone\` <dari> <ke> - Copy filter\n` +
+    `\`!rename\` <lama> <baru> - Ganti nama filter\n\n` +
+    `🔍 *Filter Info:*\n` +
+    `\`!list\` - Lihat semua filter\n` +
+    `\`!info\` <nama> - Detail filter\n` +
+    `\`!search\` <kata> - Cari filter\n` +
+    `\`!status\` - Status & statistik bot\n` +
+    `${isOwner(userId) ? '!export - Backup semua filter\n' : ''}` +
+    `\n💡 *Cara Pake Filter:*\n` +
+    `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
+    `${AI_ENABLED ? '🤖 *AI Hoki:*\nReply ke pesan bot untuk chat dengan Hoki!\n\n' : ''}` +
+    `🔔 *Notification System:*\n` +
+    `\`!notifstats\` - Lihat notification stats\n` +
+    `Auto welcome untuk member baru\n` +
+    `Daily stats dikirim ke owner setiap hari\n` +
+    `Alert otomatis untuk critical errors\n\n` +
+    `📌 *Media Support:*\n` +
+    `Text, Photo, Video, Document, GIF, Audio, Voice, Sticker\n\n` +
+    `✨ *Format Support:*\n` +
+    `Bold, Italic, Underline, Code, Link, dll`;
 
   const reply = await bot.sendMessage(chatId, helpMsg, {
     parse_mode: 'Markdown'
@@ -678,48 +691,8 @@ bot.onText(/\/help/, async (msg) => {
   autoDeleteMessage(chatId, reply.message_id, 5);
 });
 
-bot.onText(/\/addadmin(?:@\w+)?/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const messageId = msg.message_id;
-
-  autoDeleteMessage(chatId, messageId, 3);
-
-  if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (!checkRateLimit(userId)) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Slow down! Terlalu banyak request!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (!msg.reply_to_message) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Reply ke pesan orangnya!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  const targetUserId = msg.reply_to_message.from.id;
-
-  if (adminCache.has(targetUserId)) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Udah jadi admin cok!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  admins.push(targetUserId);
-  adminCache.add(targetUserId);
-  await saveJSON(ADMINS_FILE, admins);
-
-  const reply = await bot.sendMessage(chatId, `✅ Admin ditambah!\n👤 User ID: ${targetUserId}`, {
-    parse_mode: 'Markdown'
-  });
-  autoDeleteMessage(chatId, reply.message_id, 5);
-});
+// REMOVED: /addadmin command - Admin sekarang diatur manual di .env
+// Untuk menambah admin, edit ADMIN_IDS di .env dan restart bot
 
 
 // 🔔 NOTIFICATION SYSTEM
@@ -836,55 +809,8 @@ function notifyCriticalError(errorMsg, context = {}) {
 startDailyStats();
 
 
-bot.onText(/\/removeadmin(?:@\w+)?/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const messageId = msg.message_id;
-
-  autoDeleteMessage(chatId, messageId, 3);
-
-  if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (!checkRateLimit(userId)) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Slow down! Terlalu banyak request!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (!msg.reply_to_message) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Reply ke pesan admin yang mau ditendang!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  const targetUserId = msg.reply_to_message.from.id;
-
-  if (targetUserId === OWNER_ID) {
-    const reply = await bot.sendMessage(chatId, '❌ Gak bisa hapus owner anjir! Dia admin utama! 👑');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  const index = admins.indexOf(targetUserId);
-  if (index === -1) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Dia bukan admin cok!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  admins.splice(index, 1);
-  adminCache.delete(targetUserId);
-  await saveJSON(ADMINS_FILE, admins);
-
-  const reply = await bot.sendMessage(chatId, `✅ Admin dihapus!\n👤 User ID: ${targetUserId}`, {
-    parse_mode: 'Markdown'
-  });
-  autoDeleteMessage(chatId, reply.message_id, 5);
-});
+// REMOVED: /removeadmin command - Admin sekarang diatur manual di .env
+// Untuk menghapus admin, edit ADMIN_IDS di .env dan restart bot
 
 // 🚫 BLACKLIST COMMANDS
 bot.onText(/\/blacklist(?:@\w+)?/, async (msg) => {
@@ -1046,25 +972,24 @@ bot.onText(/\/listadmins/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
+    const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
   }
 
   if (admins.length === 0) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Belum ada admin cok!');
+    const reply = await bot.sendMessage(chatId, '⚠️ Belum ada admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
   }
 
-  const ownerInfo = `👑 *Owner (Admin Utama):*\nUser ID: \`${OWNER_ID}\`\n\n`;
-  const otherAdmins = admins.filter(id => id !== OWNER_ID);
-
-  let adminList = ownerInfo;
-  if (otherAdmins.length > 0) {
-    adminList += `👥 *Admin Lainnya:*\n`;
-    adminList += otherAdmins.map((id, i) => `${i + 1}. User ID: \`${id}\``).join('\n');
-  }
+  let adminList = `👑 *Daftar Admin (dari .env):*\n\n`;
+  adminList += admins.map((id, i) => {
+    const isOwner = id === OWNER_ID;
+    return `${i + 1}. User ID: \`${id}\` ${isOwner ? '👑 (Owner)' : ''}`;
+  }).join('\n');
+  
+  adminList += `\n\n💡 *Untuk menambah/hapus admin:*\nEdit ADMIN_IDS di .env dan restart bot`;
 
   const reply = await bot.sendMessage(chatId, adminList, {
     parse_mode: 'Markdown'
@@ -1289,7 +1214,7 @@ bot.onText(/^!info\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, reply.message_id, 5);
 });
 
-// 🤖 AI HOKI HANDLER
+// 🤖 AI HOKI HANDLER (ADMIN ONLY)
 bot.on('message', async (msg) => {
   if (!AI_ENABLED) return;
   if (!msg.text) return;
@@ -1297,6 +1222,12 @@ bot.on('message', async (msg) => {
   
   const chatId = msg.chat.id;
   const userId = msg.from.id;
+  
+  // ADMIN ONLY - AI Hoki hanya untuk admin
+  if (!isAdmin(userId)) {
+    console.log(`🚫 Non-admin user ${userId} tried to use AI Hoki`);
+    return; // Silent reject untuk non-admin
+  }
   
   // Security checks
   if (isBlacklisted(userId)) return;
@@ -1677,7 +1608,7 @@ bot.on('callback_query', async (query) => {
   }
 });
 
-// Optimized filter trigger handler
+// Optimized filter trigger handler (ADMIN ONLY)
 bot.on('message', async (msg) => {
   if (!msg.text) return;
   if (msg.text.startsWith('/')) return;
@@ -1685,6 +1616,8 @@ bot.on('message', async (msg) => {
       msg.text.startsWith('!list') || msg.text.startsWith('!status')) return;
 
   const chatId = msg.chat.id;
+  const userId = msg.from.id;
+  
   let filterName;
 
   if (msg.text.startsWith('!')) {
@@ -1696,14 +1629,20 @@ bot.on('message', async (msg) => {
   const filter = filters[filterName];
   if (!filter) return;
 
+  // ADMIN ONLY - Filter hanya bisa digunakan oleh admin
+  if (!isAdmin(userId)) {
+    console.log(`🚫 Non-admin user ${userId} tried to use filter: ${filterName}`);
+    return; // Silent reject untuk non-admin
+  }
+
   // Security: Check blacklist dan timeout
-  if (isBlacklisted(msg.from.id)) {
-    console.log(`🚫 Blacklisted user ${msg.from.id} tried to use filter`);
+  if (isBlacklisted(userId)) {
+    console.log(`🚫 Blacklisted user ${userId} tried to use filter`);
     return;
   }
 
-  if (isTimedOut(msg.from.id)) {
-    const remaining = getTimeoutRemaining(msg.from.id);
+  if (isTimedOut(userId)) {
+    const remaining = getTimeoutRemaining(userId);
     const reply = await bot.sendMessage(chatId, 
       `⏱️ Kamu masih timeout ${remaining} detik lagi~`
     );

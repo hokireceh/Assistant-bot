@@ -1,0 +1,8 @@
+node_modules/
+.env
+*.log
+admins.json
+filters.json
+blacklist.json
+.replit
+replit.nix
