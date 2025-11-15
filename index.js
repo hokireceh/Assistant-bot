@@ -84,69 +84,76 @@ let spamTimeouts = new Map(); // Track user timeouts
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const AI_ENABLED = GROQ_API_KEY.length > 0;
 
-// Multi-model cascade system (OPTIMIZED)
+// Multi-model cascade system (FULLY OPTIMIZED - 3-TIER)
 const AI_MODELS = [
+    // 🔥 TIER 1: PREMIUM - Complex queries, Admin priority
     {
         name: 'llama-3.3-70b-versatile',
-        dailyLimit: 1000,           // Request per hari
-        tokensPerDay: 100000,       // Token per hari (estimate)
-        tokensPerMin: 12000,        // Token per menit
-        rpm: 30,                    // Request per menit
-        quality: 10,                // Quality score (1-10)
-        latency: 300,               // Average latency (ms)
+        dailyLimit: 1000,           // 1K requests per day
+        tokensPerDay: 100000,       // 100K tokens per day
+        tokensPerMin: 12000,        // 12K tokens per minute
+        rpm: 30,                    // 30 requests per minute
+        quality: 10,                // Highest quality (1-10)
+        latency: 300,               // ~300ms response time
         used: 0,                    // Counter usage hari ini
         rpmUsed: 0,                 // Counter per menit
         lastRpmReset: Date.now(),   // Last RPM reset time
         lastDailyReset: Date.now(), // Last daily reset time
         tier: 1,                    // Tier priority
         use: 'premium',             // Use case
-        description: 'Best quality - Admin priority, complex queries'
+        description: 'Best quality - Admin priority, complex reasoning, long responses'
     },
+    
+    // ⚡ TIER 2: FAST & UNLIMITED - General use, All users
     {
-        name: 'llama-3.1-8b-instant',
-        dailyLimit: 14400,
-        tokensPerDay: 500000,
-        tokensPerMin: 6000,
-        rpm: 30,
-        quality: 7,
-        latency: 150,
+        name: 'groq/compound-mini',
+        dailyLimit: 250,            // 250 requests per day
+        tokensPerDay: Infinity,     // UNLIMITED tokens per day! 🔥
+        tokensPerMin: 70000,        // 70K tokens per minute (FASTEST!)
+        rpm: 30,                    // 30 requests per minute
+        quality: 8,                 // Good quality
+        latency: 150,               // Super fast ~150ms
         used: 0,
         rpmUsed: 0,
         lastRpmReset: Date.now(),
         lastDailyReset: Date.now(),
         tier: 2,
         use: 'general',
-        description: 'Fast & balanced - All users, simple queries'
+        description: 'Speed king - Unlimited tokens, fast responses, 85% of traffic'
     },
+    
+    // 🛡️ TIER 3: HIGH CAPACITY FALLBACK - Emergency backup
     {
-        name: 'llama-3.1-70b-versatile',  // 🔥 FIXED: Better fallback model
-        dailyLimit: 1000,
-        tokensPerDay: 100000,
-        tokensPerMin: 12000,
-        rpm: 30,
-        quality: 9,
-        latency: 250,
+        name: 'llama-3.1-8b-instant',
+        dailyLimit: 14400,          // 14.4K requests per day (MASSIVE capacity!)
+        tokensPerDay: 500000,       // 500K tokens per day
+        tokensPerMin: 6000,         // 6K tokens per minute
+        rpm: 30,                    // 30 requests per minute
+        quality: 7,                 // Decent quality
+        latency: 100,               // Fastest ~100ms
         used: 0,
         rpmUsed: 0,
         lastRpmReset: Date.now(),
         lastDailyReset: Date.now(),
         tier: 3,
         use: 'fallback',
-        description: 'Backup premium - When Tier 1 & 2 limited'
+        description: 'Capacity king - 14.4K daily limit, high availability backup'
     }
 ];
 
-// Separate guard model for content moderation (optional)
+// 🛡️ CONTENT MODERATION (Separate, upgraded to Guard 4)
 const GUARD_MODEL = {
-    name: 'meta-llama/llama-guard-3-8b',
-    dailyLimit: 14400,
-    tokensPerMin: 15000,
-    rpm: 30,
+    name: 'meta-llama/llama-guard-4-12b',  // Upgraded to Guard 4 (12B params)
+    dailyLimit: 14400,          // 14.4K requests per day
+    tokensPerMin: 15000,        // 15K tokens per minute
+    tokensPerDay: 500000,       // 500K tokens per day
+    rpm: 30,                    // 30 requests per minute
     used: 0,
     rpmUsed: 0,
     lastRpmReset: Date.now(),
     lastDailyReset: Date.now(),
-    description: 'Content moderation - Filter harmful content'
+    use: 'moderation',
+    description: 'Advanced content moderation - Filter harmful/inappropriate content'
 };
 
 // Hoki AI Personality System
