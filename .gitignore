@@ -1,8 +1,27 @@
+# Node.js
 node_modules/
+npm-debug.log
+yarn-error.log
+package-lock.json
+
+# Environment variables
 .env
-*.log
+
+# Data files
 admins.json
 filters.json
 blacklist.json
-.replit
-replit.nix
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Replit
+attached_assets/
