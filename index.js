@@ -92,6 +92,7 @@ const AI_MODELS = [
         used: 0,
         quality: 10,
         tokensPerMin: 12000,
+        rpm: 30, // Requests per minute limit
         use: 'premium' // Admin priority (Tier 1)
     },
     {
@@ -100,6 +101,7 @@ const AI_MODELS = [
         used: 0,
         quality: 7,
         tokensPerMin: 6000,
+        rpm: 30, // Requests per minute limit
         use: 'general' // Untuk semua user (Tier 2)
     },
     {
@@ -108,6 +110,7 @@ const AI_MODELS = [
         used: 0,
         quality: 6,
         tokensPerMin: 15000,
+        rpm: 30, // Requests per minute limit
         use: 'fallback' // Emergency fallback (Tier 3)
     }
 ];
@@ -1236,31 +1239,18 @@ bot.on('message', async (msg) => {
   aiRateLimits.set(userId, Date.now());
   
   try {
-    // Show typing indicator repeatedly while processing (Telegram typing lasts 5 seconds)
-    const typingInterval = setInterval(() => {
-      bot.sendChatAction(chatId, 'typing').catch(() => {});
-    }, 4000);
+    // Initial typing indicator only (reduce overhead)
+    await bot.sendChatAction(chatId, 'typing');
     
-    try {
-      // Initial typing indicator
-      await bot.sendChatAction(chatId, 'typing');
-      
-      // Call AI
-      const { response, model } = await callGroqAPI(userMessage, userId);
-      
-      // Stop typing indicator
-      clearInterval(typingInterval);
-      
-      // Send response
-      const reply = await bot.sendMessage(chatId, response, {
-        reply_to_message_id: msg.message_id
-      });
-      
-      console.log(`🤖 Hoki responded using ${model}`);
-    } finally {
-      // Always clear the typing interval
-      clearInterval(typingInterval);
-    }
+    // Call AI
+    const { response, model } = await callGroqAPI(userMessage, userId);
+    
+    // Send response
+    const reply = await bot.sendMessage(chatId, response, {
+      reply_to_message_id: msg.message_id
+    });
+    
+    console.log(`🤖 Hoki responded using ${model}`);
     
   } catch (err) {
     console.error('❌ AI Error:', err.message);
@@ -1268,6 +1258,8 @@ bot.on('message', async (msg) => {
     let errorMsg = 'Maaf nih~ Lagi error. Coba lagi yaa 🙏';
     if (err.message.includes('penuh')) {
       errorMsg = err.message;
+    } else if (err.message.includes('429') || err.message.includes('rate limit')) {
+      errorMsg = 'Lagi banyak yang pakai AI nih~ Tunggu sebentar yaa 🙏';
     }
     
     const reply = await bot.sendMessage(chatId, errorMsg, {
