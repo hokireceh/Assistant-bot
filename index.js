@@ -36,10 +36,10 @@ if (!process.env.OWNER_ID) {
 // Initialize bot with optimized settings for slow internet + IPv4-only
 const bot = new TelegramBot(process.env.BOT_TOKEN, { 
   polling: {
-    interval: 10000, // Slower polling (10 seconds) untuk koneksi sangat lambat
+    interval: 3000, // Faster polling (3 seconds) untuk response lebih cepat
     autoStart: false,
     params: {
-      timeout: 180 // 3 minutes timeout untuk koneksi sangat lambat
+      timeout: 60 // 1 minute timeout (cukup untuk most cases)
     }
   },
   filepath: false,
@@ -47,12 +47,12 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
     agent: httpsAgent, // Use IPv4-only HTTPS agent
     agentOptions: {
       keepAlive: true,
-      keepAliveMsecs: 60000, // 1 minute keepalive
-      timeout: 180000, // 3 minutes timeout
+      keepAliveMsecs: 30000, // 30s keepalive
+      timeout: 60000, // 1 minute timeout
       family: 4 // Force IPv4 only (0=both, 4=IPv4, 6=IPv6)
     },
     forever: true,
-    timeout: 180000 // 3 minutes request timeout
+    timeout: 60000 // 1 minute request timeout (faster failures)
   }
 });
 
