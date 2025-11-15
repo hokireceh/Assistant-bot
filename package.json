@@ -1,0 +1,22 @@
+{
+  "name": "telegram-bot-admin-filter",
+  "version": "1.0.1",
+  "description": "Telegram bot with admin and filter management",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "telegram",
+    "bot",
+    "admin",
+    "filter"
+  ],
+  "author": "0xhokireceh",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^5.1.0",
+    "node-telegram-bot-api": "^0.66.0"
+  }
+}
