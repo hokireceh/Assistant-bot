@@ -646,6 +646,7 @@ bot.onText(/\/start/, async (msg) => {
 
   // ADMIN ONLY - Reject non-admin users
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -671,6 +672,7 @@ bot.onText(/\/help/, async (msg) => {
 
   // ADMIN ONLY - Reject non-admin users
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -843,6 +845,7 @@ bot.onText(/\/analytics/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -888,6 +891,7 @@ bot.onText(/\/timeout(?:@\w+)?\s+(\d+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -933,6 +937,7 @@ bot.onText(/\/listadmins/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -968,6 +973,7 @@ bot.onText(/^!add\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1060,6 +1066,7 @@ bot.onText(/^!del\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1096,6 +1103,7 @@ bot.onText(/^!list/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1134,6 +1142,7 @@ bot.onText(/^!info\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1277,6 +1286,7 @@ bot.onText(/^!notifstats/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1301,6 +1311,7 @@ bot.onText(/^!aistats/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1338,6 +1349,7 @@ bot.onText(/^!aireset/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isOwner(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Cuma owner yang bisa reset AI stats!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1371,6 +1383,7 @@ bot.onText(/^!search\s+(.+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1405,6 +1418,7 @@ bot.onText(/^!export/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isOwner(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Cuma owner yang bisa export filters!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1450,6 +1464,7 @@ bot.onText(/^!clone\s+(\w+)\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1498,6 +1513,7 @@ bot.onText(/^!rename\s+(\w+)\s+(\w+)/, async (msg, match) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
@@ -1785,6 +1801,7 @@ bot.onText(/^!status/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
     const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
