@@ -58,7 +58,7 @@ const bot = new TelegramBot(process.env.BOT_TOKEN, {
 
 const OWNER_ID = parseInt(process.env.OWNER_ID);
 const FILTERS_FILE = path.join(__dirname, 'filters.json');
-const BLACKLIST_FILE = path.join(__dirname, 'blacklist.json');
+const USER_ANALYTICS_FILE = path.join(__dirname, 'user_analytics.json');
 
 // Load admins from .env (comma-separated IDs)
 // Format: ADMIN_IDS=1170158500,123456789,987654321
@@ -75,7 +75,7 @@ const loadAdminsFromEnv = () => {
 // In-memory cache
 let admins = loadAdminsFromEnv();
 let filters = {};
-let blacklist = []; // User IDs yang di-blacklist
+let userAnalytics = {}; // Track users yang mencoba pakai bot: { userId: { username, firstName, lastName, firstSeen, lastSeen, attemptCount } }
 let adminCache = new Set(admins);
 let deleteTimers = new Map();
 let spamTimeouts = new Map(); // Track user timeouts
@@ -182,10 +182,11 @@ async function initializeData() {
     adminCache = new Set(admins);
     
     filters = await loadJSON(FILTERS_FILE, {});
-    blacklist = await loadJSON(BLACKLIST_FILE, []);
+    userAnalytics = await loadJSON(USER_ANALYTICS_FILE, {});
 
     console.log('✅ Data initialized successfully');
     console.log(`👑 Admin list (from .env): ${admins.join(', ')}`);
+    console.log(`📊 User analytics: ${Object.keys(userAnalytics).length} users tracked`);
     console.log(`🤖 AI Hoki: ${AI_ENABLED ? 'ENABLED ✅' : 'DISABLED (GROQ_API_KEY not set)'}`);
   } catch (err) {
     console.error('❌ Initialization error:', err);
@@ -335,8 +336,31 @@ function isOwner(userId) {
   return userId === OWNER_ID;
 }
 
-function isBlacklisted(userId) {
-  return blacklist.includes(userId);
+// Track user yang mencoba pakai bot (untuk analytics)
+async function trackUserAccess(userId, username, firstName, lastName) {
+  const now = Date.now();
+  
+  if (!userAnalytics[userId]) {
+    // User baru
+    userAnalytics[userId] = {
+      userId: userId,
+      username: username || 'N/A',
+      firstName: firstName || 'N/A',
+      lastName: lastName || '',
+      firstSeen: now,
+      lastSeen: now,
+      attemptCount: 1
+    };
+  } else {
+    // User sudah ada, update info
+    userAnalytics[userId].username = username || userAnalytics[userId].username;
+    userAnalytics[userId].firstName = firstName || userAnalytics[userId].firstName;
+    userAnalytics[userId].lastName = lastName || userAnalytics[userId].lastName;
+    userAnalytics[userId].lastSeen = now;
+    userAnalytics[userId].attemptCount++;
+  }
+  
+  await saveJSON(USER_ANALYTICS_FILE, userAnalytics);
 }
 
 function isTimedOut(userId) {
@@ -655,11 +679,9 @@ bot.onText(/\/help/, async (msg) => {
   let helpMsg = `📖 *Daftar Command Bot*\n\n`;
 
   helpMsg += `👑 *Admin Commands:*\n` +
-    `/listadmins - Lihat daftar admin\n\n` +
+    `/listadmins - Lihat daftar admin\n` +
+    `/analytics - Lihat user yang mencoba pakai bot\n\n` +
     `🚫 *Security Commands:*\n` +
-    `/blacklist - Ban user (reply ke orangnya)\n` +
-    `/unblacklist - Unban user (reply ke orangnya)\n` +
-    `/listblacklist - Lihat user yang di-ban\n` +
     `/timeout <menit> - Timeout user (reply)\n\n` +
     `🎯 *Filter Management:*\n` +
     `\`!add\` <nama> - Bikin filter baru (reply ke pesan)\n` +
@@ -756,7 +778,7 @@ async function sendDailyStats() {
   
   const filterCount = Object.keys(filters).length;
   const adminCount = admins.length;
-  const blacklistCount = blacklist.length;
+  const analyticsCount = Object.keys(userAnalytics).length;
   const uptime = process.uptime();
   const uptimeHours = Math.floor(uptime / 3600);
   const uptimeDays = Math.floor(uptimeHours / 24);
@@ -765,7 +787,7 @@ async function sendDailyStats() {
     `📅 Date: ${new Date().toLocaleDateString('id-ID')}\n\n` +
     `🎯 Total Filters: ${filterCount}\n` +
     `👥 Total Admins: ${adminCount}\n` +
-    `🚫 Blacklisted Users: ${blacklistCount}\n` +
+    `📊 Users Tracked: ${analyticsCount}\n` +
     `⏱️ Uptime: ${uptimeDays}d ${uptimeHours % 24}h\n\n` +
     `${AI_ENABLED ? `🤖 *AI Stats:*\n` +
     `Total Requests: ${aiStats.totalRequests}\n` +
@@ -812,8 +834,8 @@ startDailyStats();
 // REMOVED: /removeadmin command - Admin sekarang diatur manual di .env
 // Untuk menghapus admin, edit ADMIN_IDS di .env dan restart bot
 
-// 🚫 BLACKLIST COMMANDS
-bot.onText(/\/blacklist(?:@\w+)?/, async (msg) => {
+// 📊 USER ANALYTICS COMMAND
+bot.onText(/\/analytics/, async (msg) => {
   const chatId = msg.chat.id;
   const userId = msg.from.id;
   const messageId = msg.message_id;
@@ -821,101 +843,40 @@ bot.onText(/\/blacklist(?:@\w+)?/, async (msg) => {
   autoDeleteMessage(chatId, messageId, 3);
 
   if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
+    const reply = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
     autoDeleteMessage(chatId, reply.message_id, 3);
     return;
   }
 
-  if (!msg.reply_to_message) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Reply ke pesan user yang mau di-ban!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
+  const analyticsCount = Object.keys(userAnalytics).length;
+
+  if (analyticsCount === 0) {
+    const reply = await bot.sendMessage(chatId, '📊 Belum ada user yang mencoba menggunakan bot.');
+    autoDeleteMessage(chatId, reply.message_id, 5);
     return;
   }
 
-  const targetUserId = msg.reply_to_message.from.id;
+  // Sort by most recent activity
+  const sortedUsers = Object.values(userAnalytics).sort((a, b) => b.lastSeen - a.lastSeen);
+  
+  let analyticsMsg = `📊 *User Analytics*\n\n`;
+  analyticsMsg += `Total users tracked: *${analyticsCount}*\n\n`;
+  
+  sortedUsers.forEach((user, i) => {
+    const lastSeenDate = new Date(user.lastSeen).toLocaleString('id-ID');
+    const fullName = `${user.firstName}${user.lastName ? ' ' + user.lastName : ''}`;
+    
+    analyticsMsg += `${i + 1}. *${fullName}*\n`;
+    analyticsMsg += `   • ID: \`${user.userId}\`\n`;
+    analyticsMsg += `   • Username: ${user.username !== 'N/A' ? '@' + user.username : 'N/A'}\n`;
+    analyticsMsg += `   • Terakhir akses: ${lastSeenDate}\n`;
+    analyticsMsg += `   • Total attempts: ${user.attemptCount}x\n\n`;
+  });
 
-  if (targetUserId === OWNER_ID || isAdmin(targetUserId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Gak bisa ban admin/owner cok!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (blacklist.includes(targetUserId)) {
-    const reply = await bot.sendMessage(chatId, '⚠️ User ini udah di-blacklist!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  blacklist.push(targetUserId);
-  await saveJSON(BLACKLIST_FILE, blacklist);
-
-  const reply = await bot.sendMessage(chatId, `🚫 User banned!\n👤 User ID: ${targetUserId}`, {
+  const reply = await bot.sendMessage(chatId, analyticsMsg, {
     parse_mode: 'Markdown'
   });
-  autoDeleteMessage(chatId, reply.message_id, 5);
-});
-
-bot.onText(/\/unblacklist(?:@\w+)?/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const messageId = msg.message_id;
-
-  autoDeleteMessage(chatId, messageId, 3);
-
-  if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (!msg.reply_to_message) {
-    const reply = await bot.sendMessage(chatId, '⚠️ Reply ke pesan user yang mau di-unban!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  const targetUserId = msg.reply_to_message.from.id;
-  const index = blacklist.indexOf(targetUserId);
-
-  if (index === -1) {
-    const reply = await bot.sendMessage(chatId, '⚠️ User ini gak ada di blacklist!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  blacklist.splice(index, 1);
-  await saveJSON(BLACKLIST_FILE, blacklist);
-
-  const reply = await bot.sendMessage(chatId, `✅ User unbanned!\n👤 User ID: ${targetUserId}`, {
-    parse_mode: 'Markdown'
-  });
-  autoDeleteMessage(chatId, reply.message_id, 5);
-});
-
-bot.onText(/\/listblacklist/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-  const messageId = msg.message_id;
-
-  autoDeleteMessage(chatId, messageId, 3);
-
-  if (!isAdmin(userId)) {
-    const reply = await bot.sendMessage(chatId, '❌ Lu bukan admin anjir!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  if (blacklist.length === 0) {
-    const reply = await bot.sendMessage(chatId, '✅ Belum ada user yang di-blacklist!');
-    autoDeleteMessage(chatId, reply.message_id, 3);
-    return;
-  }
-
-  const blacklistStr = blacklist.map((id, i) => `${i + 1}. User ID: \`${id}\``).join('\n');
-  const reply = await bot.sendMessage(chatId, `🚫 *Blacklisted Users (${blacklist.length}):*\n\n${blacklistStr}`, {
-    parse_mode: 'Markdown'
-  });
-  autoDeleteMessage(chatId, reply.message_id, 5);
+  autoDeleteMessage(chatId, reply.message_id, 60); // 1 minute display
 });
 
 bot.onText(/\/timeout(?:@\w+)?\s+(\d+)/, async (msg, match) => {
@@ -1225,12 +1186,13 @@ bot.on('message', async (msg) => {
   
   // ADMIN ONLY - AI Hoki hanya untuk admin
   if (!isAdmin(userId)) {
-    console.log(`🚫 Non-admin user ${userId} tried to use AI Hoki`);
+    // Track non-admin user yang mencoba pakai bot
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
+    console.log(`🚫 Non-admin user ${userId} (@${msg.from.username || 'N/A'}) tried to use AI Hoki`);
     return; // Silent reject untuk non-admin
   }
   
   // Security checks
-  if (isBlacklisted(userId)) return;
   if (isTimedOut(userId)) return;
   
   // Deteksi tipe chat: private (DM) atau group
@@ -1631,16 +1593,13 @@ bot.on('message', async (msg) => {
 
   // ADMIN ONLY - Filter hanya bisa digunakan oleh admin
   if (!isAdmin(userId)) {
-    console.log(`🚫 Non-admin user ${userId} tried to use filter: ${filterName}`);
+    // Track non-admin user yang mencoba pakai bot
+    await trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name);
+    console.log(`🚫 Non-admin user ${userId} (@${msg.from.username || 'N/A'}) tried to use filter: ${filterName}`);
     return; // Silent reject untuk non-admin
   }
 
-  // Security: Check blacklist dan timeout
-  if (isBlacklisted(userId)) {
-    console.log(`🚫 Blacklisted user ${userId} tried to use filter`);
-    return;
-  }
-
+  // Security: Check timeout
   if (isTimedOut(userId)) {
     const remaining = getTimeoutRemaining(userId);
     const reply = await bot.sendMessage(chatId, 
