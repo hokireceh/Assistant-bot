@@ -698,7 +698,7 @@ bot.onText(/\/help/, async (msg) => {
     `${isOwner(userId) ? '!export - Backup semua filter\n' : ''}` +
     `\n💡 *Cara Pake Filter:*\n` +
     `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
-    `${AI_ENABLED ? '🤖 *AI Hoki:*\nReply ke pesan bot untuk chat dengan Hoki!\n\n' : ''}` +
+    `${AI_ENABLED ? '🤖 *AI Hoki:*\nReply ke pesan bot untuk chat dengan Hoki!\n\`!aistats\` - Lihat statistik AI\n' + (isOwner(userId) ? '!aireset - Reset AI stats & conversations\n' : '') + '\n' : ''}` +
     `🔔 *Notification System:*\n` +
     `\`!notifstats\` - Lihat notification stats\n` +
     `Auto welcome untuk member baru\n` +
