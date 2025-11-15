@@ -84,36 +84,70 @@ let spamTimeouts = new Map(); // Track user timeouts
 const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
 const AI_ENABLED = GROQ_API_KEY.length > 0;
 
-// Multi-model cascade system
+// Multi-model cascade system (OPTIMIZED)
 const AI_MODELS = [
     {
         name: 'llama-3.3-70b-versatile',
-        limit: 1000,
-        used: 0,
-        quality: 10,
-        tokensPerMin: 12000,
-        rpm: 30, // Requests per minute limit
-        use: 'premium' // Admin priority (Tier 1)
+        dailyLimit: 1000,           // Request per hari
+        tokensPerDay: 100000,       // Token per hari (estimate)
+        tokensPerMin: 12000,        // Token per menit
+        rpm: 30,                    // Request per menit
+        quality: 10,                // Quality score (1-10)
+        latency: 300,               // Average latency (ms)
+        used: 0,                    // Counter usage hari ini
+        rpmUsed: 0,                 // Counter per menit
+        lastRpmReset: Date.now(),   // Last RPM reset time
+        lastDailyReset: Date.now(), // Last daily reset time
+        tier: 1,                    // Tier priority
+        use: 'premium',             // Use case
+        description: 'Best quality - Admin priority, complex queries'
     },
     {
         name: 'llama-3.1-8b-instant',
-        limit: 14400,
-        used: 0,
-        quality: 7,
+        dailyLimit: 14400,
+        tokensPerDay: 500000,
         tokensPerMin: 6000,
-        rpm: 30, // Requests per minute limit
-        use: 'general' // Untuk semua user (Tier 2)
+        rpm: 30,
+        quality: 7,
+        latency: 150,
+        used: 0,
+        rpmUsed: 0,
+        lastRpmReset: Date.now(),
+        lastDailyReset: Date.now(),
+        tier: 2,
+        use: 'general',
+        description: 'Fast & balanced - All users, simple queries'
     },
     {
-        name: 'meta-llama/llama-guard-3-8b',
-        limit: 14400,
+        name: 'llama-3.1-70b-versatile',  // 🔥 FIXED: Better fallback model
+        dailyLimit: 1000,
+        tokensPerDay: 100000,
+        tokensPerMin: 12000,
+        rpm: 30,
+        quality: 9,
+        latency: 250,
         used: 0,
-        quality: 6,
-        tokensPerMin: 15000,
-        rpm: 30, // Requests per minute limit
-        use: 'fallback' // Emergency fallback (Tier 3)
+        rpmUsed: 0,
+        lastRpmReset: Date.now(),
+        lastDailyReset: Date.now(),
+        tier: 3,
+        use: 'fallback',
+        description: 'Backup premium - When Tier 1 & 2 limited'
     }
 ];
+
+// Separate guard model for content moderation (optional)
+const GUARD_MODEL = {
+    name: 'meta-llama/llama-guard-3-8b',
+    dailyLimit: 14400,
+    tokensPerMin: 15000,
+    rpm: 30,
+    used: 0,
+    rpmUsed: 0,
+    lastRpmReset: Date.now(),
+    lastDailyReset: Date.now(),
+    description: 'Content moderation - Filter harmful content'
+};
 
 // Hoki AI Personality System
 const HOKI_PERSONALITY = {
@@ -165,17 +199,8 @@ setInterval(() => {
   }
 }, 60000); // Every minute
 
-// Reset model usage counters every hour (Groq limit resets hourly)
-setInterval(() => {
-  AI_MODELS.forEach(m => {
-    const previousUsed = m.used;
-    m.used = 0;
-    if (previousUsed > 0) {
-      console.log(`🔄 Reset ${m.name}: ${previousUsed} -> 0`);
-    }
-  });
-  console.log('✅ AI model counters reset (hourly)');
-}, 3600000); // Every hour
+// Auto-reset handled by resetModelCounters() function (called before each model selection)
+// RPM resets every minute, daily resets every 24 hours
 
 // Initialize data asynchronously
 async function initializeData() {
@@ -383,23 +408,98 @@ function getTimeoutRemaining(userId) {
   return Math.ceil((timeout.until - Date.now()) / 1000);
 }
 
-// AI Helper: Get best available model based on user type
-function getBestModel(userId) {
-  const userIsAdmin = isAdmin(userId);
+// AI Helper: Auto-reset counters
+function resetModelCounters() {
+  const now = Date.now();
   
-  // Admin gets priority access to premium model
-  if (userIsAdmin) {
-    const premiumModel = AI_MODELS.find(m => m.use === 'premium' && m.used < m.limit);
-    if (premiumModel) return premiumModel;
+  AI_MODELS.forEach(model => {
+    // Reset RPM counter every minute
+    if (now - model.lastRpmReset > 60000) {
+      model.rpmUsed = 0;
+      model.lastRpmReset = now;
+    }
+    
+    // Reset daily counter every 24 hours
+    if (now - model.lastDailyReset > 86400000) {
+      model.used = 0;
+      model.lastDailyReset = now;
+      console.log(`🔄 Daily counter reset: ${model.name}`);
+    }
+  });
+  
+  // Reset guard model counters
+  if (now - GUARD_MODEL.lastRpmReset > 60000) {
+    GUARD_MODEL.rpmUsed = 0;
+    GUARD_MODEL.lastRpmReset = now;
+  }
+  if (now - GUARD_MODEL.lastDailyReset > 86400000) {
+    GUARD_MODEL.used = 0;
+    GUARD_MODEL.lastDailyReset = now;
+  }
+}
+
+// AI Helper: Analyze query complexity
+function analyzeComplexity(text) {
+  let score = 0;
+  
+  if (text.length > 500) score += 0.3;
+  if (text.split('\n').length > 5) score += 0.2;
+  if (/code|function|algorithm|technical|explain.*detail/i.test(text)) score += 0.3;
+  if (/explain|analyze|compare|detailed|how.*work/i.test(text)) score += 0.2;
+  
+  if (score < 0.3) return 'simple';
+  if (score < 0.7) return 'medium';
+  return 'complex';
+}
+
+// AI Helper: Check if model available
+function isModelAvailable(model) {
+  return (
+    model.rpmUsed < model.rpm &&           // RPM not exceeded
+    model.used < model.dailyLimit          // Daily limit not exceeded
+  );
+}
+
+// AI Helper: Get best available model (OPTIMIZED)
+function getBestModel(userId, userMessage) {
+  resetModelCounters(); // Auto-reset sebelum check
+  
+  const userIsAdmin = isAdmin(userId);
+  const complexity = analyzeComplexity(userMessage);
+  
+  console.log(`🔍 Query complexity: ${complexity}`);
+  
+  // TIER 1: Admin dengan query complex → Premium model
+  if (userIsAdmin && complexity === 'complex') {
+    const premiumModel = AI_MODELS.find(m => m.tier === 1);
+    if (premiumModel && isModelAvailable(premiumModel)) {
+      console.log(`✅ Selected Tier 1 (premium): ${premiumModel.name}`);
+      return premiumModel;
+    }
   }
   
-  // General users get general model
-  const generalModel = AI_MODELS.find(m => m.use === 'general' && m.used < m.limit);
-  if (generalModel) return generalModel;
+  // TIER 2: Semua user, query simple-medium → General model
+  const generalModel = AI_MODELS.find(m => m.tier === 2);
+  if (generalModel && isModelAvailable(generalModel)) {
+    console.log(`✅ Selected Tier 2 (general): ${generalModel.name}`);
+    return generalModel;
+  }
   
-  // Fallback to emergency model
-  const fallbackModel = AI_MODELS.find(m => m.use === 'fallback' && m.used < m.limit);
-  return fallbackModel || null;
+  // TIER 3: Fallback jika Tier 2 limit
+  const fallbackModel = AI_MODELS.find(m => m.tier === 3);
+  if (fallbackModel && isModelAvailable(fallbackModel)) {
+    console.log(`✅ Selected Tier 3 (fallback): ${fallbackModel.name}`);
+    return fallbackModel;
+  }
+  
+  // LAST RESORT: Coba premium lagi (mungkin udah reset)
+  const premiumModel = AI_MODELS.find(m => m.tier === 1);
+  if (premiumModel && isModelAvailable(premiumModel)) {
+    console.log(`✅ Selected Tier 1 (last resort): ${premiumModel.name}`);
+    return premiumModel;
+  }
+  
+  return null;
 }
 
 // Language detection helper
@@ -418,9 +518,9 @@ function detectLanguage(text) {
 
 // AI Helper: Call Groq API with context-aware responses
 async function callGroqAPI(userMessage, userId) {
-  const model = getBestModel(userId);
+  const model = getBestModel(userId, userMessage); // Pass userMessage untuk complexity detection
   if (!model) {
-    throw new Error('Semua model AI lagi penuh nih~ Coba lagi nanti yaa 🙏');
+    throw new Error('⚠️ Semua model AI lagi rate limited! Tunggu 1 menit yaa~ 🙏');
   }
   
   // Get conversation history (limit to MAX_CONVERSATION_LENGTH)
@@ -540,8 +640,14 @@ Respond in the detected language and adjust your helpfulness based on user role!
     const data = await response.json();
     const aiResponse = data.choices[0].message.content;
     
-    // Update model usage
+    // Update model usage (detailed tracking)
     model.used++;
+    model.rpmUsed++;
+    
+    console.log(`📊 Model usage: ${model.name}`);
+    console.log(`   RPM: ${model.rpmUsed}/${model.rpm}`);
+    console.log(`   Daily: ${model.used}/${model.dailyLimit}`);
+    console.log(`   Tokens: ${data.usage?.total_tokens || 0}`);
     
     // Save conversation history (limit to MAX_CONVERSATION_LENGTH pairs)
     history.push({ role: 'user', content: sanitizedMessage });
@@ -559,6 +665,7 @@ Respond in the detected language and adjust your helpfulness based on user role!
     return {
       response: aiResponse,
       model: model.name,
+      tier: model.tier,
       tokensUsed: data.usage?.total_tokens || 0
     };
     
@@ -1242,8 +1349,8 @@ bot.on('message', async (msg) => {
     // Initial typing indicator only (reduce overhead)
     await bot.sendChatAction(chatId, 'typing');
     
-    // Call AI
-    const { response, model } = await callGroqAPI(userMessage, userId);
+    // Call AI (with complexity-aware model selection)
+    const { response, model, tier } = await callGroqAPI(userMessage, userId);
     
     // Send response
     const reply = await bot.sendMessage(chatId, response, {
@@ -1315,9 +1422,15 @@ bot.onText(/^!aistats/, async (msg) => {
     return;
   }
 
-  const modelStats = AI_MODELS.map(m => 
-    `${m.name}:\n  Used: ${m.used}/${m.limit}\n  Quality: ${m.quality}/10\n  Use: ${m.use}`
-  ).join('\n\n');
+  // Reset counters first
+  resetModelCounters();
+  
+  const modelStats = AI_MODELS.map(m => {
+    const available = isModelAvailable(m) ? '✅' : '❌';
+    return `${available} *Tier ${m.tier}:* \`${m.name}\`\n` +
+           `   RPM: ${m.rpmUsed}/${m.rpm} | Daily: ${m.used}/${m.dailyLimit}\n` +
+           `   Quality: ${m.quality}/10 | Latency: ~${m.latency}ms`;
+  }).join('\n\n');
 
   const statsMsg = `🤖 *AI Hoki Statistics*\n\n` +
     `📊 *Overall:*\n` +
@@ -1325,8 +1438,12 @@ bot.onText(/^!aistats/, async (msg) => {
     `Successful: ${aiStats.successfulResponses}\n` +
     `Failed: ${aiStats.failedResponses}\n` +
     `Success Rate: ${aiStats.totalRequests > 0 ? ((aiStats.successfulResponses / aiStats.totalRequests) * 100).toFixed(1) : 0}%\n\n` +
-    `🎯 *Model Usage:*\n${modelStats}\n\n` +
-    `💬 *Active Conversations:* ${aiConversations.size}`;
+    `🎯 *Chat Models:*\n${modelStats}\n\n` +
+    `🛡️ *Guard Model:* \`${GUARD_MODEL.name}\`\n` +
+    `   RPM: ${GUARD_MODEL.rpmUsed}/${GUARD_MODEL.rpm} | Daily: ${GUARD_MODEL.used}/${GUARD_MODEL.dailyLimit}\n\n` +
+    `💬 *Active Conversations:* ${aiConversations.size}\n\n` +
+    `💡 *Complexity Detection:* Enabled\n` +
+    `🔄 *Auto-Reset:* Every minute (RPM) & daily`;
 
   const reply = await bot.sendMessage(chatId, statsMsg, { parse_mode: 'Markdown' });
   autoDeleteMessage(chatId, reply.message_id, 10);
