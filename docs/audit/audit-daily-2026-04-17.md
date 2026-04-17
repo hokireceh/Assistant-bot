@@ -9,7 +9,7 @@
 
 | ID | Prioritas | Area | Judul |
 |----|-----------|------|-------|
-| BUG-001 | 🔴 HIGH | AI / Security | `sanitizedMessage` tidak digunakan saat kirim ke Groq API |
+| BUG-001 | ✅ FIXED | AI / Security | `sanitizedMessage` tidak digunakan saat kirim ke Groq API |
 | BUG-002 | 🔴 HIGH | Performa | `bot.getMe()` dipanggil setiap pesan di AI handler |
 | BUG-003 | 🔴 HIGH | AI Cleanup | Stale conversation cleanup berdasarkan length, bukan timestamp |
 | BUG-004 | 🔴 HIGH | AI Reset | `!aireset` hanya reset `used`, tidak reset `rpmUsed` |

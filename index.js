@@ -567,6 +567,10 @@ ${filterCount > 20 ? '\n(dan ' + (filterCount - 20) + ' filters lainnya...)' : '
 Kamu bisa referensikan filters ini kalau user tanya tentang fitur bot atau minta bantuan.`;
   }
   
+  // Sanitize input SEBELUM build messages (prompt injection prevention)
+  // Hapus backticks dan truncate 1000 char — ini yang dikirim ke API dan disimpan ke history
+  const sanitizedMessage = userMessage.replace(/```/g, '').substring(0, 1000);
+
   // Build messages with personality + filter knowledge + context
   const languageInstruction = detectedLang === 'en-US' 
     ? `LANGUAGE: Respond in English (detected from user's message).
@@ -617,14 +621,11 @@ Respond in the detected language and adjust your helpfulness based on user role!
     ...recentHistory,
     {
       role: 'user',
-      content: userMessage
+      content: sanitizedMessage
     }
   ];
   
   try {
-    // Sanitize input (prompt injection prevention)
-    const sanitizedMessage = userMessage.replace(/```/g, '').substring(0, 1000);
-    
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
