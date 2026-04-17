@@ -1,172 +1,87 @@
-# Audit Harian — Telegram Bot Admin & Filter Management
-**Tanggal:** 2026-04-17  
-**File yang diaudit:** `index.js` (2148 baris)  
-**Auditor:** Agent
+# Daily Audit — 17 April 2026
+
+## Status: ✅ SEMUA SELESAI
 
 ---
 
-## Ringkasan Temuan
+## Ringkasan
 
-| ID | Prioritas | Area | Judul |
-|----|-----------|------|-------|
-| BUG-001 | ✅ FIXED | AI / Security | `sanitizedMessage` tidak digunakan saat kirim ke Groq API |
-| BUG-002 | ✅ FIXED | Performa | `bot.getMe()` dipanggil setiap pesan di AI handler |
-| BUG-003 | ✅ FIXED | AI Cleanup | Stale conversation cleanup berdasarkan length, bukan timestamp |
-| BUG-004 | ✅ FIXED | AI Reset | `!aireset` hanya reset `used`, tidak reset `rpmUsed` |
-| BUG-005 | ✅ FIXED | Analytics | Admin di-track sebagai non-admin di `!aireset` dan `!export` |
-| BUG-006 | ✅ FIXED | Admin System | `loadAdminsFromEnv()` tidak otomatis include `OWNER_ID` ke array `admins` |
-
----
-
-## Detail Temuan
+| ID | Prioritas | Area | Judul | Status |
+|----|-----------|------|-------|--------|
+| BUG-001 | 🔴 HIGH | AI / Security | `sanitizedMessage` tidak digunakan saat kirim ke Groq API | ✅ FIXED |
+| BUG-002 | ✅ FIXED | Performa | `bot.getMe()` dipanggil setiap pesan di AI handler | ✅ FIXED |
+| BUG-003 | ✅ FIXED | AI Cleanup | Stale conversation cleanup berdasarkan length, bukan timestamp | ✅ FIXED |
+| BUG-004 | ✅ FIXED | AI Reset | `!aireset` hanya reset `used`, tidak reset `rpmUsed` | ✅ FIXED |
+| BUG-005 | ✅ FIXED | Analytics | Admin di-track sebagai non-admin di `!aireset` dan `!export` | ✅ FIXED |
+| BUG-006 | ✅ FIXED | Admin System | `loadAdminsFromEnv()` tidak otomatis include `OWNER_ID` ke array `admins` | ✅ FIXED |
 
 ---
 
-### BUG-001 — `sanitizedMessage` tidak digunakan saat kirim ke Groq API
-**Prioritas:** 🔴 HIGH  
-**Baris:** 619, 626, 660
+## Sesi 2: 24/365 Hardening (17 Apr 2026)
 
-**Penjelasan logika:**  
-Di fungsi `callGroqAPI()`, ada 2 variabel berbeda:
-- `userMessage` — pesan original dari user (BELUM di-sanitize)
-- `sanitizedMessage` — hasil sanitasi: hapus backticks + potong 1000 karakter
+### FIX-007: !aireset double-fire ke AI
+- **Masalah**: `bot.onText(/^!aireset$/)` dan `bot.on('message')` keduanya fire untuk pesan `!aireset`. Message handler juga meloloskannya ke AI.
+- **Fix**: Tambah `RESERVED_BANG` Set di handlers.js. Message handler skip jika `cmd` ada di Set ini.
 
-Yang dikirim ke Groq API di array `messages` adalah `userMessage` (baris 619):
-```js
-{ role: 'user', content: userMessage }
+### FIX-008: add_filter menerima bot's own message sebagai source
+- **Masalah**: User bisa reply ke pesan instruksi bot (prompt message), konten prompt bot jadi isi filter.
+- **Fix**: Cek `source.from?.id === cachedBotId` sebelum proses. Jika iya, tampilkan error dengan instruksi yang benar.
+
+### FIX-009: Filter list kosong menampilkan "Halaman 1/0"
+- **Masalah**: `buildFilterListText` tidak handle kasus 0 filter. Keyboard pagination tetap muncul.
+- **Fix**: Tambah early return dengan pesan `📭 Belum ada filter.` dan gunakan `backKeyboard` saat `total === 0`.
+
+### FIX-010: filter_export memanggil answerCallbackQuery dua kali
+- **Masalah**: Top-level handler jawab semua callback_query terlebih dahulu, lalu `filter_export` jawab lagi dengan custom text.
+- **Fix**: Skip global answerCallbackQuery untuk `filter_export` (kondisi `data !== 'filter_export'`), let `filter_export` jawab sendiri.
+
+### FIX-011: Unused code — `promptUser` function dan `path` import
+- **Masalah**: `promptUser` didefinisikan tapi tidak pernah dipanggil. `const path = require('path')` tidak digunakan.
+- **Fix**: Hapus keduanya dari handlers.js.
+
+### FIX-012: pendingActions tidak punya TTL
+- **Masalah**: Jika user memulai action (add_filter, dll) lalu tidak melanjutkan, state tersimpan selamanya (memory leak).
+- **Fix**: Setiap pending action diberi `expiresAt = Date.now() + 10 menit`. `setInterval` setiap 5 menit cleanup expired entries. Helper `setPending()` menggantikan `pendingActions.set()` langsung.
+
+### FIX-013: Callback handler tidak punya global try/catch
+- **Masalah**: Error di dalam callback (misal DB down) bisa uncaught, crash handler.
+- **Fix**: Pisahkan logic ke `handleCallback()`, panggil via `try/catch` dari event handler. Error ditangkap dan pesan error dikirim ke user.
+
+### FIX-014: cleanExpiredTimeouts hanya dipanggil saat startup
+- **Masalah**: Timeout yang expired tidak dibersihkan dari DB selama bot jalan berhari-hari.
+- **Fix**: Tambah `setInterval` di `index.js` yang memanggil `cleanExpiredTimeouts` setiap 1 jam.
+
+### FIX-015: resetAIStats tidak reset GUARD_MODEL counters
+- **Masalah**: Saat `!aireset`, hanya `AI_MODELS` yang di-reset, `GUARD_MODEL.rpmUsed` dan `GUARD_MODEL.used` tetap lama.
+- **Fix**: Tambah reset `GUARD_MODEL.rpmUsed = 0` dan `GUARD_MODEL.used = 0` di `resetAIStats()`.
+
+### FIX-016: Tidak ada process-level uncaughtException / unhandledRejection handler
+- **Masalah**: Exception yang tidak ter-catch di luar async handlers bisa crash process Node.js.
+- **Fix**: Tambah `process.on('uncaughtException')` dan `process.on('unhandledRejection')` di `index.js`. Keduanya log error tapi tidak exit.
+
+### FIX-017: DB connection tidak retry saat startup
+- **Masalah**: Satu kali DB connect failure langsung `process.exit(1)`. Bisa false positive jika DB sedang restart.
+- **Fix**: Tambah loop retry 5x dengan delay bertahap (3s, 6s, 9s...). Keluar hanya jika semua gagal.
+
+### FIX-018: handlePendingAction dipisah dari setupHandlers
+- **Improvement**: Logika pending actions dipisah ke fungsi `handlePendingAction()` dan `handleCallback()` sendiri untuk maintainability.
+
+---
+
+## Startup Log (setelah hardening)
+
 ```
-Tapi `sanitizedMessage` baru dipakai saat menyimpan ke conversation history (baris 660):
-```js
-history.push({ role: 'user', content: sanitizedMessage });
+🌐 IPv4-only mode aktif
+🚀 Starting bot...
+👑 Admins loaded (1): 1170158500
+✅ PostgreSQL connected
+✅ Expired timeouts cleaned
+✅ Webhook cleared
+✅ Connected as @hokibot (ID: 1993747121)
+✅ Handlers registered
+📊 Daily stats: 18/4/2026, 09.00.00
+✅ Cached bot ID: 1993747121 (@hokibot)
+🤖 Bot is running! 🚀
 ```
 
-**Akibat:**  
-Sanitasi prompt injection (remove ` ``` `, truncate) TIDAK EFEKTIF karena payload asli yang ke-kirim ke API. Hanya conversation history yang tersimpan versi sanitize-nya.
-
----
-
-### BUG-002 — `bot.getMe()` dipanggil setiap pesan di AI handler
-**Prioritas:** 🔴 HIGH  
-**Baris:** 1331
-
-**Penjelasan logika:**  
-Di dalam `bot.on('message', ...)` untuk AI handler:
-```js
-const botInfo = await bot.getMe();
-const isReplyToBot = msg.reply_to_message && msg.reply_to_message.from.id === botInfo.id;
-```
-`bot.getMe()` memanggil Telegram API setiap kali ada pesan masuk. Bot info (ID, username) tidak pernah berubah selama runtime — memanggil API untuk ini adalah pemborosan network dan latency setiap pesan.
-
-**Akibat:**  
-- Setiap pesan masuk → 1 API call tambahan ke Telegram
-- Pada koneksi lambat (konfigurasi utama project ini), ini memperlambat respons AI secara signifikan
-- Di group chat dengan banyak pesan, ini bisa menyebabkan rate limit dari Telegram
-
----
-
-### BUG-003 — Stale conversation cleanup berdasarkan length, bukan timestamp
-**Prioritas:** 🔴 HIGH  
-**Baris:** 200–207
-
-**Penjelasan logika:**  
-Comment di kode menyatakan: *"Clean up stale AI conversations (older than 1 hour)"*  
-Tapi implementasinya mengecek **panjang history**, bukan **waktu terakhir aktif**:
-```js
-if (history.length > MAX_CONVERSATION_LENGTH * 2) {
-  aiConversations.delete(userId);
-}
-```
-`MAX_CONVERSATION_LENGTH = 10`, jadi kondisi terpenuhi hanya jika `history.length > 20`.
-
-Namun di `callGroqAPI()` baris 664, history selalu di-trim:
-```js
-const trimmedHistory = history.slice(-MAX_CONVERSATION_LENGTH * 2); // max 20
-aiConversations.set(userId, trimmedHistory);
-```
-Artinya history **tidak pernah akan > 20**, sehingga cleanup ini **tidak akan pernah berjalan**.
-
-**Akibat:**  
-- Conversation history user yang sudah tidak aktif berhari-hari tetap tersimpan di memory
-- Memory leak bertahap: `aiConversations` Map terus bertambah, tidak pernah di-clean
-- Intent "1 hour stale cleanup" tidak terlaksana
-
----
-
-### BUG-004 — `!aireset` hanya reset `used`, tidak reset `rpmUsed`
-**Prioritas:** 🔴 HIGH  
-**Baris:** 1474–1476
-
-**Penjelasan logika:**  
-Saat owner menjalankan `!aireset`:
-```js
-AI_MODELS.forEach(m => m.used = 0);
-```
-Hanya counter `used` (daily limit) yang direset. Counter `rpmUsed` (rate per minute) **tidak direset**.
-
-**Akibat:**  
-Jika owner menjalankan `!aireset` untuk mencoba "refresh" AI saat rate limit, model akan tetap dianggap rate-limited sampai RPM counter auto-reset 1 menit. Lebih parah: jika ada scenario di mana `rpmUsed` terkorupsi, reset manual tidak bisa membersihkannya.
-
----
-
-### BUG-005 — Admin di-track sebagai non-admin user di `!aireset` dan `!export`
-**Prioritas:** 🟡 MEDIUM  
-**Baris:** 1467–1470 (`!aireset`), 1536–1539 (`!export`)
-
-**Penjelasan logika:**  
-Di `!aireset`, guard check hanya mengecek `isOwner()`, bukan `isAdmin()`:
-```js
-if (!isOwner(userId)) {
-  await trackUserAccess(userId, ...); // ← Admin juga kena ini
-  const reply = await bot.sendMessage(chatId, '❌ Cuma owner yang bisa reset AI stats!');
-  return;
-}
-```
-Jika seorang **admin (bukan owner)** mencoba `!aireset`, mereka akan:
-1. Masuk ke `user_analytics.json` sebagai "non-admin yang mencoba akses bot"
-2. Tampil di `/analytics` seolah-olah user tidak sah
-
-Hal sama terjadi di `!export` (baris 1536–1539).
-
-**Akibat:**  
-Data analytics terkontaminasi — admin yang sah tampil sebagai "unauthorized access".
-
----
-
-### BUG-006 — `loadAdminsFromEnv()` tidak otomatis include `OWNER_ID` ke array `admins`
-**Prioritas:** 🟡 MEDIUM  
-**Baris:** 65–73
-
-**Penjelasan logika:**  
-```js
-const loadAdminsFromEnv = () => {
-  const adminIds = process.env.ADMIN_IDS || '';
-  if (!adminIds.trim()) {
-    return [OWNER_ID]; // OWNER_ID hanya masuk di sini (ADMIN_IDS kosong)
-  }
-  return adminIds.split(',').map(...).filter(...); // OWNER_ID TIDAK otomatis masuk
-};
-```
-Jika `ADMIN_IDS` diisi (tidak kosong), `OWNER_ID` tidak otomatis masuk ke array `admins`.
-
-`isAdmin()` dan `isOwner()` tetap bekerja karena ada pengecekan `userId === OWNER_ID`. Tapi:
-- `admins.length` di `!status` dan daily stats TIDAK menghitung Owner
-- `/listadmins` tidak menampilkan Owner jika OWNER_ID tidak ada di ADMIN_IDS
-- `sendDailyStats()` melaporkan jumlah admin yang salah (kurang 1)
-
-**Akibat:**  
-Statistik jumlah admin yang ditampilkan di berbagai command tidak akurat.
-
----
-
-## Queue Fix (Urut Prioritas)
-
-1. **BUG-001** — Sanitasi prompt injection tidak efektif (fix: kirim `sanitizedMessage` ke API)
-2. **BUG-002** — `bot.getMe()` per pesan (fix: cache botId saat startup)
-3. **BUG-003** — Cleanup conversation tidak berjalan (fix: tracking timestamp, cleanup berdasarkan idle time)
-4. **BUG-004** — `!aireset` partial reset (fix: reset juga `rpmUsed`)
-5. **BUG-005** — Admin di-track sebagai non-admin (fix: skip trackUserAccess jika isAdmin)
-6. **BUG-006** — OWNER_ID tidak masuk admins array (fix: selalu include OWNER_ID)
-
----
-
-*Audit ini dihasilkan dari pembacaan manual seluruh `index.js`. Tidak ada docs referensi yang ditemukan (folder `docs/` belum ada sebelum audit ini).*
+**Status: 🟢 PRODUCTION READY — 24/365 OK**

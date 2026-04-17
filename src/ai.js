@@ -236,9 +236,15 @@ function resetAIStats() {
     m.used    = 0;
     m.rpmUsed = 0;
   });
+  // Reset guard model counters juga
+  if (GUARD_MODEL) {
+    GUARD_MODEL.rpmUsed = 0;
+    GUARD_MODEL.used    = 0;
+  }
   aiConversations.clear();
   aiRateLimits.clear();
   aiStats = { totalRequests: 0, successfulResponses: 0, failedResponses: 0, modelUsage: {} };
+  console.log('✅ AI stats, conversations, dan rate limits berhasil di-reset');
 }
 
 module.exports = {
