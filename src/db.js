@@ -2,7 +2,12 @@ const { Pool } = require('pg');
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  // Ganti baris di bawah ini dari { rejectUnauthorized: false } jadi false
+  ssl: false 
+});
+
+pool.on('error', (err) => {
+  console.error('DB pool error:', err.message);
 });
 
 pool.on('error', (err) => {
