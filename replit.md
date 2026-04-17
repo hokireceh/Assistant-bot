@@ -56,7 +56,17 @@ GROQ_API_KEY=xxx (optional)
 
 ## 📝 Changelog
 
-### v2.0.0 (Current)
+### v2.1.0 (Current)
+- ✅ ZERO commands: /help, /timeout, !aireset semua dihapus
+- ✅ Menu Keyboard diperluas 5 tombol: Menu Utama | Filter | Status | ⚙️ Tools | ❓ Bantuan
+- ✅ Admin Tools inline menu: Timeout User, Analytics, Notif Stats
+- ✅ Owner Panel inline menu: Reset AI, Health, Export Filters
+- ✅ Timeout user via inline flow (ID+menit atau reply+menit)
+- ✅ Reset AI via inline button dengan konfirmasi
+- ✅ Bantuan/Help via inline keyboard (tombol ❓)
+- ✅ Semua fitur 100% accessible tanpa mengetik command
+
+### v2.0.0
 - ✅ Full refactor: modular structure (src/ directory)
 - ✅ PostgreSQL menggantikan JSON file storage
 - ✅ Inline keyboard + menu keyboard (full UI overhaul)

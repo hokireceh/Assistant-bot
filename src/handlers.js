@@ -9,20 +9,16 @@ const {
 } = require('./utils');
 
 // ============================================================
-// PENDING ACTIONS STATE (multi-step flows)
-// TTL: 10 menit — auto-expire jika user tidak melanjutkan
+// PENDING ACTIONS — multi-step flows
+// TTL 10 menit, auto-cleanup setiap 5 menit
 // ============================================================
-const pendingActions = new Map(); // userId -> { action, data, expiresAt }
+const pendingActions = new Map();
+const PENDING_TTL_MS = 10 * 60 * 1000;
 
-const PENDING_TTL_MS = 10 * 60 * 1000; // 10 menit
-
-// Cleanup expired pending actions setiap 5 menit
 setInterval(() => {
   const now = Date.now();
   for (const [uid, p] of pendingActions.entries()) {
-    if (p.expiresAt && now > p.expiresAt) {
-      pendingActions.delete(uid);
-    }
+    if (p.expiresAt && now > p.expiresAt) pendingActions.delete(uid);
   }
 }, 5 * 60 * 1000);
 
@@ -31,14 +27,18 @@ function setPending(userId, action, data = {}) {
 }
 
 // ============================================================
-// CACHED BOT ID — diisi satu kali saat setupHandlers
+// CACHED BOT ID — satu kali saat startup
 // ============================================================
 let cachedBotId = null;
 
 // ============================================================
-// RESERVED ! COMMANDS — tidak diteruskan ke AI
+// RESERVED BANG WORDS — tidak diteruskan ke AI / filter
+// (user mengetik !kata, bot diam saja, tidak proses)
 // ============================================================
-const RESERVED_BANG = new Set(['aireset', 'aistats', 'health', 'notifstats', 'status', 'export', 'list', 'add', 'del', 'info', 'search', 'clone', 'rename']);
+const RESERVED_BANG = new Set([
+  'aireset','aistats','health','notifstats','status','export',
+  'list','add','del','info','search','clone','rename','timeout','help'
+]);
 
 // ============================================================
 // NOTIF STATS (shared dengan ai.js)
@@ -46,10 +46,11 @@ const RESERVED_BANG = new Set(['aireset', 'aistats', 'health', 'notifstats', 'st
 const notifStats = ai.notificationStats;
 
 // ============================================================
-// HELPER: send / edit main menu
+// HELPERS
 // ============================================================
+
 async function sendMainMenu(bot, chatId, userId, editMsgId = null) {
-  const text = `🤖 *Menu Utama*\n\nSelamat datang! Pilih menu yang kamu butuhkan.`;
+  const text = `🤖 *Menu Utama*\n\nSelamat datang! Pilih menu di bawah.`;
   const opts = { parse_mode: 'Markdown', reply_markup: kb.mainMenuKeyboard(userId) };
   if (editMsgId) {
     return bot.editMessageText(text, { chat_id: chatId, message_id: editMsgId, ...opts })
@@ -58,9 +59,6 @@ async function sendMainMenu(bot, chatId, userId, editMsgId = null) {
   return bot.sendMessage(chatId, text, opts);
 }
 
-// ============================================================
-// HELPER: send / edit filter menu
-// ============================================================
 async function sendFilterMenu(bot, chatId, userId, editMsgId = null) {
   const count = await db.getFilterCount();
   const text  = `🎯 *Filter Manager*\n\n📦 Total filter: *${count}*\n\nPilih aksi:`;
@@ -72,13 +70,58 @@ async function sendFilterMenu(bot, chatId, userId, editMsgId = null) {
   return bot.sendMessage(chatId, text, opts);
 }
 
-// ============================================================
-// HELPER: build filter list page
-// ============================================================
+async function sendAdminTools(bot, chatId, userId, editMsgId = null) {
+  const text = `⚙️ *Admin Tools*\n\nAksi admin tersedia di bawah:`;
+  const opts = { parse_mode: 'Markdown', reply_markup: kb.adminToolsKeyboard() };
+  if (editMsgId) {
+    return bot.editMessageText(text, { chat_id: chatId, message_id: editMsgId, ...opts })
+      .catch(() => bot.sendMessage(chatId, text, opts));
+  }
+  return bot.sendMessage(chatId, text, opts);
+}
+
+async function sendBantuan(bot, chatId, userId, editMsgId = null) {
+  const help =
+    `📖 *Panduan Bot*\n\n` +
+    `*📱 Menu Keyboard (bawah chat):*\n` +
+    `• 📋 Menu Utama — lihat semua menu\n` +
+    `• 🎯 Filter — kelola filter\n` +
+    `• 📊 Status — info bot\n` +
+    `• ⚙️ Tools — admin tools (timeout, analytics)\n` +
+    `• ❓ Bantuan — panduan ini\n\n` +
+    `*🎯 Filter Management:*\n` +
+    `• ➕ Tambah — reply ke pesan sumber, ketik nama\n` +
+    `• 🗑️ Hapus — ketik nama filter\n` +
+    `• 📋 Daftar — pagination 15/halaman\n` +
+    `• 🔍 Cari — keyword search\n` +
+    `• 📋 Clone — ketik: \`asal tujuan\`\n` +
+    `• ✏️ Rename — ketik: \`lama baru\`\n\n` +
+    `*💡 Cara trigger filter:*\n` +
+    `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
+    `*⏱️ Timeout user:*\n` +
+    `⚙️ Tools → ⏱️ Timeout User → ketik \`ID MENIT\`\n` +
+    `atau reply ke pesan user, ketik MENIT\n\n` +
+    `${AI_ENABLED ? '*🤖 AI Hoki:*\n• Private: langsung chat\n• Group: reply ke pesan bot\n\n' : ''}` +
+    `${isOwner(userId) ? '*👑 Owner Panel:*\n♻️ Reset AI | ⚙️ Health | 💾 Export\n\n' : ''}` +
+    `_Semua aksi via tombol — tidak perlu command!_`;
+
+  const opts = {
+    parse_mode: 'Markdown',
+    reply_markup: kb.backKeyboard('main_menu')
+  };
+  if (editMsgId) {
+    return bot.editMessageText(help, { chat_id: chatId, message_id: editMsgId, ...opts })
+      .catch(() => bot.sendMessage(chatId, help, opts));
+  }
+  const r = await bot.sendMessage(chatId, help, opts);
+  autoDeleteMessage(bot, chatId, r.message_id, 15);
+  return r;
+}
+
 async function buildFilterListText(page) {
   const names = await db.getFilterNames();
   if (names.length === 0) {
-    return { text: '📭 Belum ada filter. Tambah filter via menu ➕.', total: 0, page: 1 };
+    return { text: '📭 Belum ada filter. Tambah via tombol ➕.', total: 0, page: 1 };
   }
   const { items, total, page: p } = createPagination(names, page, 15);
   const start    = (p - 1) * 15;
@@ -89,19 +132,15 @@ async function buildFilterListText(page) {
   };
 }
 
-// ============================================================
-// HELPER: send filter content (trigger)
-// ============================================================
 async function sendFilter(bot, chatId, filter) {
-  // Build inline keyboard from saved buttons
   let replyMarkup = null;
   if (filter.buttons && filter.buttons.length > 0) {
     replyMarkup = {
       inline_keyboard: filter.buttons.map(row =>
         row.map(btn => ({
           text:          btn.text,
-          url:           btn.url            || undefined,
-          callback_data: btn.callback_data  || undefined
+          url:           btn.url           || undefined,
+          callback_data: btn.callback_data || undefined
         }))
       )
     };
@@ -111,7 +150,6 @@ async function sendFilter(bot, chatId, filter) {
   const caption_entities = filter.caption_entities;
   const rawText          = filter.text || '';
 
-  // Text message formatting
   let formattedText  = rawText;
   let textParseMode  = null;
   if (entities && entities.length > 0) {
@@ -119,22 +157,19 @@ async function sendFilter(bot, chatId, filter) {
     textParseMode = 'HTML';
   }
 
-  // Caption formatting (for media)
   let formattedCaption = rawText;
   let captionParseMode = null;
   if (rawText.trim().length > 0) {
-    if (caption_entities && caption_entities.length > 0) {
-      formattedCaption = entitiesToHTML(rawText, caption_entities);
-      captionParseMode = 'HTML';
-    } else if (entities && entities.length > 0) {
-      formattedCaption = entitiesToHTML(rawText, entities);
+    const ent = caption_entities?.length ? caption_entities : entities;
+    if (ent && ent.length > 0) {
+      formattedCaption = entitiesToHTML(rawText, ent);
       captionParseMode = 'HTML';
     }
   }
 
   const captionOpts = () => {
     const o = {};
-    if (formattedCaption && formattedCaption.trim()) {
+    if (formattedCaption?.trim()) {
       o.caption = formattedCaption;
       if (captionParseMode) o.parse_mode = captionParseMode;
     }
@@ -150,12 +185,12 @@ async function sendFilter(bot, chatId, filter) {
   else if (filter.voice)     await bot.sendVoice    (chatId, filter.voice,     captionOpts());
   else if (filter.sticker) {
     await bot.sendSticker(chatId, filter.sticker);
-    if (formattedText && formattedText.trim()) {
+    if (formattedText?.trim()) {
       const o = {};
       if (textParseMode) o.parse_mode = textParseMode;
       await bot.sendMessage(chatId, formattedText, o);
     }
-  } else if (formattedText && formattedText.trim()) {
+  } else if (formattedText?.trim()) {
     const o = {};
     if (textParseMode) o.parse_mode = textParseMode;
     if (replyMarkup)   o.reply_markup = replyMarkup;
@@ -163,26 +198,19 @@ async function sendFilter(bot, chatId, filter) {
   }
 }
 
-// ============================================================
-// HELPER: notify critical error to owner (fire-and-forget)
-// ============================================================
 function notifyCriticalError(bot, errorMsg, context = {}) {
   if (!OWNER_ID) return;
-  const msg =
+  bot.sendMessage(OWNER_ID,
     `🚨 *Critical Error*\n\n` +
     `⏰ ${new Date().toLocaleString('id-ID')}\n` +
     `❌ \`${String(errorMsg).substring(0, 200)}\`\n` +
     `${context.chatId     ? `💬 Chat: ${context.chatId}\n`     : ''}` +
     `${context.userId     ? `👤 User: ${context.userId}\n`     : ''}` +
-    `${context.filterName ? `🎯 Filter: ${context.filterName}` : ''}`;
-  bot.sendMessage(OWNER_ID, msg, { parse_mode: 'Markdown' })
-    .then(() => notifStats.alertsSent++)
-    .catch(() => {});
+    `${context.filterName ? `🎯 Filter: ${context.filterName}` : ''}`,
+    { parse_mode: 'Markdown' }
+  ).then(() => notifStats.alertsSent++).catch(() => {});
 }
 
-// ============================================================
-// INLINE KEYBOARD HELPER: cancel row
-// ============================================================
 function cancelRow(target = 'filter_menu') {
   return { inline_keyboard: [[{ text: '❌ Batal', callback_data: target }]] };
 }
@@ -192,14 +220,15 @@ function cancelRow(target = 'filter_menu') {
 // ============================================================
 function setupHandlers(bot) {
 
-  // Cache bot ID once on startup — never call getMe() per-message (BUG-002 fix)
+  // Cache bot ID satu kali saat startup
   bot.getMe().then(me => {
     cachedBotId = me.id;
     console.log(`✅ Cached bot ID: ${cachedBotId} (@${me.username})`);
   }).catch(err => console.error('❌ getMe failed:', err.message));
 
   // ==========================================================
-  // /start
+  // /start — SATU-SATUNYA slash command
+  // Diperlukan Telegram untuk init bot di private chat
   // ==========================================================
   bot.onText(/\/start/, async (msg) => {
     const chatId    = msg.chat.id;
@@ -215,118 +244,17 @@ function setupHandlers(bot) {
       return;
     }
 
-    // Persistent reply keyboard (menu di bawah)
+    // Kirim persistent reply keyboard (menu di bawah chat)
     await bot.sendMessage(chatId,
-      `👋 Halo *${firstName}*! Menu keyboard aktif di bawah~`,
+      `👋 Halo *${firstName}*!\n\nMenu keyboard aktif di bawah. Semua fitur bisa diakses tanpa command! 🚀`,
       { parse_mode: 'Markdown', reply_markup: kb.adminMenuKeyboard() }
     );
     await sendMainMenu(bot, chatId, userId);
   });
 
   // ==========================================================
-  // /help
-  // ==========================================================
-  bot.onText(/\/help/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    autoDeleteMessage(bot, chatId, msg.message_id, 1);
-
-    if (!isAdmin(userId)) {
-      await db.trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name)
-        .catch(() => {});
-      const r = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-
-    const help =
-      `📖 *Panduan Bot*\n\n` +
-      `🎯 *Filter* (via menu 🎯 Kelola Filter):\n` +
-      `• ➕ Tambah — reply ke pesan sumber, ketik nama filter\n` +
-      `• 🗑️ Hapus — ketik nama filter\n` +
-      `• 📋 Daftar — pagination 15/halaman\n` +
-      `• 🔍 Cari — cari by keyword\n` +
-      `• 📋 Clone — ketik: \`asal tujuan\`\n` +
-      `• ✏️ Rename — ketik: \`lama baru\`\n` +
-      `${isOwner(userId) ? '• 💾 Export — backup JSON (owner only)\n' : ''}` +
-      `\n💡 *Trigger filter:*\n` +
-      `Ketik \`!namafilter\` atau langsung \`namafilter\`\n\n` +
-      `${AI_ENABLED ? '🤖 *AI Hoki:*\n• Private: langsung chat\n• Group: reply ke bot\n\n' : ''}` +
-      `⏱️ *Timeout:* /timeout <menit> (reply ke user)\n\n` +
-      `⌨️ *Shortcut* (menu keyboard di bawah):\n` +
-      `📋 Menu Utama | 🎯 Filter | 📊 Status`;
-
-    const r = await bot.sendMessage(chatId, help, {
-      parse_mode: 'Markdown',
-      reply_markup: kb.backKeyboard('main_menu')
-    });
-    autoDeleteMessage(bot, chatId, r.message_id, 15);
-  });
-
-  // ==========================================================
-  // /timeout — membutuhkan reply ke user target
-  // ==========================================================
-  bot.onText(/\/timeout(?:@\w+)?\s+(\d+)/, async (msg, match) => {
-    const chatId  = msg.chat.id;
-    const userId  = msg.from.id;
-    const minutes = parseInt(match[1]);
-    autoDeleteMessage(bot, chatId, msg.message_id, 3);
-
-    if (!isAdmin(userId)) {
-      await db.trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name)
-        .catch(() => {});
-      const r = await bot.sendMessage(chatId, '❌ Hanya admin yang bisa timeout user!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-    if (!msg.reply_to_message) {
-      const r = await bot.sendMessage(chatId, '⚠️ Reply ke pesan user yang mau di-timeout!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-    if (minutes < 1 || minutes > 1440) {
-      const r = await bot.sendMessage(chatId, '⚠️ Durasi timeout: 1–1440 menit (max 24 jam)');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-
-    const targetId = msg.reply_to_message.from?.id;
-    if (!targetId) {
-      const r = await bot.sendMessage(chatId, '⚠️ Tidak bisa baca user ID target!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-    if (targetId === OWNER_ID || isAdmin(targetId)) {
-      const r = await bot.sendMessage(chatId, '❌ Tidak bisa timeout admin/owner!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
-      return;
-    }
-
-    await db.setSpamTimeout(targetId, Date.now() + minutes * 60 * 1000);
-    const r = await bot.sendMessage(chatId,
-      `⏱️ *User di-timeout!*\n👤 ID: \`${targetId}\`\n⏰ Durasi: ${minutes} menit`,
-      { parse_mode: 'Markdown' }
-    );
-    autoDeleteMessage(bot, chatId, r.message_id, 5);
-  });
-
-  // ==========================================================
-  // !aireset — owner only (via text command)
-  // Tetap sebagai teks agar mudah diakses; dilindungi dari AI
-  // ==========================================================
-  bot.onText(/^!aireset$/, async (msg) => {
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
-    autoDeleteMessage(bot, chatId, msg.message_id, 3);
-    if (!isOwner(userId)) return;
-    ai.resetAIStats();
-    const r = await bot.sendMessage(chatId, '✅ AI stats & conversations berhasil di-reset!');
-    autoDeleteMessage(bot, chatId, r.message_id, 5);
-  });
-
-  // ==========================================================
   // CALLBACK QUERY — semua inline button
-  // Dibungkus try/catch agar error tidak crash bot
+  // Dibungkus try/catch global agar error tidak crash bot
   // ==========================================================
   bot.on('callback_query', async (query) => {
     const chatId    = query.message.chat.id;
@@ -334,8 +262,7 @@ function setupHandlers(bot) {
     const userId    = query.from.id;
     const data      = query.data;
 
-    // Jawab callback agar Telegram tidak tampilkan "loading"
-    // Khusus filter_export: jawab dengan text custom sebelum proses
+    // Export dan filter_export jawab sendiri dengan custom text
     if (data !== 'filter_export') {
       await bot.answerCallbackQuery(query.id).catch(() => {});
     }
@@ -352,7 +279,7 @@ function setupHandlers(bot) {
   });
 
   // ==========================================================
-  // MESSAGE HANDLER
+  // MESSAGE HANDLER — shortcut menu keyboard + pending + filter + AI
   // ==========================================================
   bot.on('message', async (msg) => {
     if (!msg.from) return;
@@ -361,10 +288,10 @@ function setupHandlers(bot) {
     const userId = msg.from.id;
     const text   = msg.text || '';
 
-    // Slash commands sudah ditangani onText di atas
+    // Slash commands ditangani oleh onText di atas
     if (text.startsWith('/')) return;
 
-    // Skip reserved bang commands — ditangani onText masing-masing
+    // Skip reserved bang words (jangan proses sebagai AI/filter)
     if (text.startsWith('!')) {
       const cmd = text.substring(1).split(/\s+/)[0].toLowerCase();
       if (RESERVED_BANG.has(cmd)) return;
@@ -372,7 +299,6 @@ function setupHandlers(bot) {
 
     // Gate non-admin — track dan silent reject
     if (!isAdmin(userId)) {
-      // Hanya track jika terlihat mencoba trigger filter
       const pName = text.startsWith('!') ? text.substring(1).trim().toLowerCase() : text.trim().toLowerCase();
       if (pName && !pName.includes(' ') && pName.length >= 2) {
         const exists = await db.filterExists(pName).catch(() => false);
@@ -385,7 +311,7 @@ function setupHandlers(bot) {
       return;
     }
 
-    // Timeout check (DB-backed)
+    // Timeout check
     if (await isTimedOut(userId)) {
       const rem = await getTimeoutRemaining(userId);
       const r   = await bot.sendMessage(chatId, `⏱️ Kamu masih timeout ${rem} detik lagi~`);
@@ -393,7 +319,7 @@ function setupHandlers(bot) {
       return;
     }
 
-    // ---- Reply keyboard shortcuts ----
+    // ---- Menu Keyboard Shortcuts ----
     if (text === '📋 Menu Utama') {
       pendingActions.delete(userId);
       autoDeleteMessage(bot, chatId, msg.message_id, 1);
@@ -414,18 +340,28 @@ function setupHandlers(bot) {
       const r     = await bot.sendMessage(chatId,
         `📊 *Status Bot*\n\n` +
         `🎯 Filters: *${stats.total}*\n` +
-        `💾 Memory: *${(mem.heapUsed/1024/1024).toFixed(2)} MB*\n` +
-        `⏱️ Uptime: *${Math.floor(up/3600)}h ${Math.floor((up%3600)/60)}m*`,
+        `💾 Memory: *${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB*\n` +
+        `⏱️ Uptime: *${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m*`,
         { parse_mode: 'Markdown', reply_markup: kb.backKeyboard('main_menu') }
       );
-      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      autoDeleteMessage(bot, chatId, r.message_id, 10);
+      return;
+    }
+    if (text === '⚙️ Tools') {
+      pendingActions.delete(userId);
+      autoDeleteMessage(bot, chatId, msg.message_id, 1);
+      await sendAdminTools(bot, chatId, userId);
+      return;
+    }
+    if (text === '❓ Bantuan') {
+      autoDeleteMessage(bot, chatId, msg.message_id, 1);
+      await sendBantuan(bot, chatId, userId);
       return;
     }
 
-    // ---- Pending actions ----
+    // ---- Pending Actions ----
     const pending = pendingActions.get(userId);
     if (pending) {
-      // Cek TTL expired
       if (pending.expiresAt && Date.now() > pending.expiresAt) {
         pendingActions.delete(userId);
       } else {
@@ -435,7 +371,7 @@ function setupHandlers(bot) {
       }
     }
 
-    // ---- Filter trigger ----
+    // ---- Filter Trigger ----
     const potentialName = text.startsWith('!') ? text.substring(1).trim().toLowerCase() : text.trim().toLowerCase();
     if (potentialName && potentialName.length >= 2 && !/\s/.test(potentialName)) {
       const filter = await db.getFilter(potentialName).catch(() => null);
@@ -466,7 +402,6 @@ function setupHandlers(bot) {
     // ---- AI Hoki ----
     if (!AI_ENABLED || !msg.text) return;
 
-    // Group: hanya respon saat di-reply
     if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
       if (!cachedBotId) return;
       if (msg.reply_to_message?.from?.id !== cachedBotId) return;
@@ -534,7 +469,7 @@ function setupHandlers(bot) {
     lastErrTime = now;
     pollingErrCount++;
 
-    const isNet = ['EFATAL','ETELEGRAM','ETIMEDOUT'].includes(error.code)
+    const isNet = ['EFATAL', 'ETELEGRAM', 'ETIMEDOUT'].includes(error.code)
                || error.message.includes('getUpdates');
 
     if (pollingErrCount >= 10 && !isNet) {
@@ -543,7 +478,7 @@ function setupHandlers(bot) {
     }
 
     const delay = Math.min(5000 * Math.min(pollingErrCount, 6), 30000);
-    console.log(`🔄 Retry ${pollingErrCount}/10 in ${delay/1000}s...`);
+    console.log(`🔄 Retry ${pollingErrCount}/10 in ${delay / 1000}s...`);
     setTimeout(() => {
       bot.stopPolling().then(() => bot.startPolling({ restart: true })).catch(() => {});
     }, delay);
@@ -551,12 +486,11 @@ function setupHandlers(bot) {
 }
 
 // ============================================================
-// CALLBACK HANDLER (dipanggil dari event handler di atas)
-// Dipisah agar mudah di-maintain dan ter-wrap try/catch
+// CALLBACK HANDLER
+// Semua inline keyboard callback diproses di sini
 // ============================================================
 async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
 
-  // ---- noop ----
   if (data === 'noop') return;
 
   // ---- main_menu ----
@@ -573,20 +507,45 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
+  // ---- admin_tools ----
+  if (data === 'admin_tools') {
+    pendingActions.delete(userId);
+    await sendAdminTools(bot, chatId, userId, messageId);
+    return;
+  }
+
+  // ---- bantuan ----
+  if (data === 'bantuan') {
+    await sendBantuan(bot, chatId, userId, messageId);
+    return;
+  }
+
+  // ---- owner_panel (owner only) ----
+  if (data === 'owner_panel') {
+    if (!isOwner(userId)) return;
+    await bot.editMessageText(
+      `👑 *Owner Panel*\n\nAkses eksklusif owner:\n` +
+      `• ♻️ Reset AI — reset semua stats & konversasi\n` +
+      `• ⚙️ Health Check — info detail sistem\n` +
+      `• 💾 Export Filters — backup semua filter`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.ownerPanelKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
   // ---- status ----
   if (data === 'status') {
     const stats = await db.getFilterStats();
     const mem   = process.memoryUsage();
     const up    = process.uptime();
-    const uh    = Math.floor(up / 3600);
-    const um    = Math.floor((up % 3600) / 60);
     await bot.editMessageText(
       `📊 *Status Bot*\n\n` +
       `👑 Admins: *${getAdmins().length}*\n` +
-      `🎯 Filters: *${stats.total}*\n` +
-      `💾 Memory: *${(mem.heapUsed/1024/1024).toFixed(2)} MB*\n` +
-      `⏱️ Uptime: *${uh}h ${um}m*\n\n` +
-      `📦 *Breakdown:*\n` +
+      `🎯 Total Filter: *${stats.total}*\n` +
+      `💾 Memory: *${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB*\n` +
+      `⏱️ Uptime: *${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m*\n\n` +
+      `📦 *Breakdown Filter:*\n` +
       `📝 Text: ${stats.text || 0}   🖼️ Photo: ${stats.photo || 0}\n` +
       `🎥 Video: ${stats.video || 0}   📄 Doc: ${stats.document || 0}\n` +
       `🎞️ GIF: ${stats.animation || 0}   🎵 Audio: ${stats.audio || 0}\n` +
@@ -601,52 +560,22 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   // ---- analytics ----
   if (data === 'analytics') {
     const users = await db.getAllAnalytics();
-    let text = `📊 *User Analytics*\n\n`;
+    let text = `📈 *User Analytics*\n\n`;
     if (users.length === 0) {
       text += '_Belum ada user yang tercatat._';
     } else {
       text += `Total: *${users.length} user*\n\n`;
-      users.slice(0, 20).forEach((u, i) => {
+      users.slice(0, 15).forEach((u, i) => {
         const name = [u.first_name, u.last_name].filter(Boolean).join(' ') || 'N/A';
         const last = new Date(Number(u.last_seen)).toLocaleString('id-ID');
-        text += `${i + 1}. *${name}*\n   ID: \`${u.user_id}\` @${u.username || 'N/A'}\n   ${last} | ${u.attempt_count}x\n\n`;
+        text += `${i + 1}. *${name}*\n   \`${u.user_id}\` @${u.username || 'N/A'}\n   ${last} | ${u.attempt_count}x\n\n`;
       });
-      if (users.length > 20) text += `_...dan ${users.length - 20} lainnya_`;
+      if (users.length > 15) text += `_...dan ${users.length - 15} lainnya_`;
     }
     await bot.editMessageText(text, {
       chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-      reply_markup: kb.backKeyboard('main_menu')
+      reply_markup: kb.backKeyboard('admin_tools')
     }).catch(() => {});
-    return;
-  }
-
-  // ---- ai_stats ----
-  if (data === 'ai_stats') {
-    if (!AI_ENABLED) {
-      await bot.editMessageText('⚠️ AI Hoki belum diaktifkan! Set GROQ_API_KEY di .env', {
-        chat_id: chatId, message_id: messageId,
-        reply_markup: kb.backKeyboard('main_menu')
-      }).catch(() => {});
-      return;
-    }
-    const stats = ai.getAIStats();
-    const convs = ai.getAIConversations();
-    const mText = AI_MODELS.map(m => {
-      const ok = (m.rpmUsed < m.rpm && m.used < m.dailyLimit) ? '✅' : '❌';
-      return `${ok} *T${m.tier}* \`${m.name}\`\n   RPM:${m.rpmUsed}/${m.rpm} Daily:${m.used}/${m.dailyLimit}`;
-    }).join('\n\n');
-    const sr = stats.totalRequests > 0 ? ((stats.successfulResponses / stats.totalRequests) * 100).toFixed(1) : '0.0';
-    await bot.editMessageText(
-      `🤖 *AI Hoki Stats*\n\n` +
-      `📊 Req: ${stats.totalRequests} (✅${stats.successfulResponses} ❌${stats.failedResponses})\n` +
-      `📈 Success rate: ${sr}%\n` +
-      `💬 Active convs: ${convs.size}\n\n` +
-      `🎯 *Models:*\n${mText}\n\n` +
-      `🛡️ Guard: \`${GUARD_MODEL.name}\`\n` +
-      `${isOwner(userId) ? '_Ketik !aireset untuk reset_' : ''}`,
-      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-        reply_markup: kb.backKeyboard('main_menu') }
-    ).catch(() => {});
     return;
   }
 
@@ -654,12 +583,44 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   if (data === 'notif_stats') {
     await bot.editMessageText(
       `🔔 *Notification Stats*\n\n` +
-      `👋 Welcomes Sent: ${notifStats.welcomesSent}\n` +
-      `📊 Daily Stats Sent: ${notifStats.dailyStatsSent}\n` +
-      `🚨 Alerts Sent: ${notifStats.alertsSent}\n\n` +
-      `✅ System: Active`,
+      `👋 Welcomes: ${notifStats.welcomesSent}\n` +
+      `📊 Daily Stats: ${notifStats.dailyStatsSent}\n` +
+      `🚨 Alerts: ${notifStats.alertsSent}`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-        reply_markup: kb.backKeyboard('main_menu') }
+        reply_markup: kb.backKeyboard('admin_tools') }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- ai_stats ----
+  if (data === 'ai_stats') {
+    if (!AI_ENABLED) {
+      await bot.editMessageText(
+        `⚠️ *AI Hoki Belum Aktif*\n\n` +
+        `Set \`GROQ_API_KEY\` di environment secrets untuk mengaktifkan AI.`,
+        { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+          reply_markup: kb.backKeyboard('main_menu') }
+      ).catch(() => {});
+      return;
+    }
+    const stats = ai.getAIStats();
+    const convs = ai.getAIConversations();
+    const mText = AI_MODELS.map(m => {
+      const ok = (m.rpmUsed < m.rpm && m.used < m.dailyLimit) ? '✅' : '❌';
+      return `${ok} *T${m.tier}* \`${m.name}\`\n   RPM: ${m.rpmUsed}/${m.rpm} | Daily: ${m.used}/${m.dailyLimit}`;
+    }).join('\n\n');
+    const sr = stats.totalRequests > 0 ? ((stats.successfulResponses / stats.totalRequests) * 100).toFixed(1) : '0.0';
+    const backTarget = isOwner(userId) ? 'owner_panel' : 'main_menu';
+    await bot.editMessageText(
+      `🤖 *AI Hoki Stats*\n\n` +
+      `📊 Total Req: ${stats.totalRequests}\n` +
+      `✅ Success: ${stats.successfulResponses} (${sr}%)\n` +
+      `❌ Failed: ${stats.failedResponses}\n` +
+      `💬 Active Convs: ${convs.size}\n\n` +
+      `*Models:*\n${mText}\n\n` +
+      `🛡️ Guard: \`${GUARD_MODEL.name}\``,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.backKeyboard(backTarget) }
     ).catch(() => {});
     return;
   }
@@ -674,12 +635,88 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
       filters:   await db.getFilterCount(),
       admins:    getAdmins().length,
       ai_convs:  ai.getAIConversations().size,
-      pending:   pendingActions.size
+      pending_actions: pendingActions.size
     };
     await bot.editMessageText(
-      `\`\`\`json\n${JSON.stringify(h, null, 2)}\n\`\`\``,
+      `⚙️ *Health Check*\n\n\`\`\`json\n${JSON.stringify(h, null, 2)}\n\`\`\``,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-        reply_markup: kb.backKeyboard('main_menu') }
+        reply_markup: kb.backKeyboard('owner_panel') }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- reset_ai (owner only, minta konfirmasi) ----
+  if (data === 'reset_ai') {
+    if (!isOwner(userId)) return;
+    await bot.editMessageText(
+      `♻️ *Reset AI Stats*\n\n` +
+      `Ini akan:\n` +
+      `• Reset semua model counters (RPM + Daily)\n` +
+      `• Hapus semua riwayat percakapan\n` +
+      `• Reset rate limits\n\n` +
+      `Yakin mau reset sekarang?`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.resetAiConfirmKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- reset_ai_confirm (owner only) ----
+  if (data === 'reset_ai_confirm') {
+    if (!isOwner(userId)) return;
+    ai.resetAIStats();
+    await bot.editMessageText(
+      `✅ *AI Stats Berhasil Di-reset!*\n\n` +
+      `• Semua model counters: 0\n` +
+      `• Riwayat percakapan: dihapus\n` +
+      `• Rate limits: clear`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.backKeyboard('owner_panel') }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- timeout_user (set pending) ----
+  if (data === 'timeout_user') {
+    setPending(userId, 'timeout_user');
+    await bot.editMessageText(
+      `⏱️ *Timeout User*\n\n` +
+      `Ada 2 cara:\n\n` +
+      `*Cara 1 — langsung ketik ID:*\n` +
+      `\`USER_ID DURASI_MENIT\`\n` +
+      `_Contoh: \`123456789 30\` → timeout 30 menit_\n\n` +
+      `*Cara 2 — reply ke pesan user:*\n` +
+      `Reply ke pesan user, lalu ketik angka menit saja\n` +
+      `_Contoh: reply ke pesan user → ketik \`30\`_\n\n` +
+      `⏳ Action batal otomatis dalam 10 menit`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: cancelRow('admin_tools') }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- timeout_confirm:ID:MENIT ----
+  if (data.startsWith('timeout_confirm:')) {
+    const parts    = data.split(':');
+    const targetId = parseInt(parts[1]);
+    const minutes  = parseInt(parts[2]);
+    if (!targetId || !minutes) return;
+
+    if (isAdmin(targetId)) {
+      await bot.editMessageText('❌ Tidak bisa timeout admin/owner!',
+        { chat_id: chatId, message_id: messageId, reply_markup: kb.backKeyboard('admin_tools') }
+      ).catch(() => {});
+      return;
+    }
+
+    await db.setSpamTimeout(targetId, Date.now() + minutes * 60 * 1000);
+    await bot.editMessageText(
+      `✅ *User Di-timeout!*\n\n` +
+      `👤 User ID: \`${targetId}\`\n` +
+      `⏰ Durasi: *${minutes} menit*\n` +
+      `🕐 Berakhir: ${new Date(Date.now() + minutes * 60 * 1000).toLocaleString('id-ID')}`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.backKeyboard('admin_tools') }
     ).catch(() => {});
     return;
   }
@@ -688,24 +725,22 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   // FILTER CALLBACKS
   // ==========================================================
 
-  // ---- filter_add ----
   if (data === 'filter_add') {
     setPending(userId, 'add_filter');
     await bot.editMessageText(
       `➕ *Tambah Filter*\n\n` +
-      `*Caranya:*\n` +
+      `*Langkah-langkah:*\n` +
       `1️⃣ Pergi ke pesan yang mau dijadikan filter\n` +
       `2️⃣ Reply pesan tersebut\n` +
-      `3️⃣ Ketik nama filter di reply kamu\n\n` +
+      `3️⃣ Ketik nama filter di kolom reply kamu\n\n` +
       `_Contoh: reply ke foto promo → ketik_ \`promo\`\n\n` +
-      `⏳ Tunggu 10 menit, action akan otomatis batal.`,
+      `⏳ Batal otomatis dalam 10 menit`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
     return;
   }
 
-  // ---- filter_del ----
   if (data === 'filter_del') {
     setPending(userId, 'del_filter');
     await bot.editMessageText(
@@ -716,7 +751,6 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
-  // ---- filter_confirm_del:NAME ----
   if (data.startsWith('filter_confirm_del:')) {
     const name = data.split(':')[1];
     await db.deleteFilter(name);
@@ -728,19 +762,17 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
-  // ---- filter_list_N ----
   if (data.startsWith('filter_list_')) {
     const page = parseInt(data.split('_')[2]) || 1;
     const { text, total, page: p } = await buildFilterListText(page);
-    const kb2 = total > 0 ? kb.filterListKeyboard(p, total) : kb.backKeyboard('filter_menu');
+    const keyboard = total > 0 ? kb.filterListKeyboard(p, total) : kb.backKeyboard('filter_menu');
     await bot.editMessageText(text, {
       chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-      reply_markup: kb2
+      reply_markup: keyboard
     }).catch(() => {});
     return;
   }
 
-  // ---- filter_search ----
   if (data === 'filter_search') {
     setPending(userId, 'search_filter');
     await bot.editMessageText(
@@ -751,39 +783,40 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
-  // ---- filter_clone ----
   if (data === 'filter_clone') {
     setPending(userId, 'clone_filter');
     await bot.editMessageText(
-      `📋 *Clone Filter*\n\nKetik: \`nama_asal nama_baru\`\n_Contoh:_ \`promo promo2\``,
+      `📋 *Clone Filter*\n\nKetik: \`nama_asal nama_baru\`\n_Contoh: \`promo promo2\`_`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
     return;
   }
 
-  // ---- filter_rename ----
   if (data === 'filter_rename') {
     setPending(userId, 'rename_filter');
     await bot.editMessageText(
-      `✏️ *Rename Filter*\n\nKetik: \`nama_lama nama_baru\`\n_Contoh:_ \`promo promo_v2\``,
+      `✏️ *Rename Filter*\n\nKetik: \`nama_lama nama_baru\`\n_Contoh: \`promo promo_v2\`_`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
     return;
   }
 
-  // ---- filter_export (owner only) ----
   if (data === 'filter_export') {
     if (!isOwner(userId)) {
-      await bot.answerCallbackQuery(queryId, { text: '❌ Hanya owner!' }).catch(() => {});
+      await bot.answerCallbackQuery(queryId, { text: '❌ Hanya owner yang bisa export!' }).catch(() => {});
       return;
     }
     await bot.answerCallbackQuery(queryId, { text: '⏳ Menyiapkan export...' }).catch(() => {});
     const rows = await db.getAllFilters();
-    const buf  = Buffer.from(JSON.stringify({ exported_at: new Date().toISOString(), filter_count: rows.length, filters: rows }, null, 2));
+    const buf  = Buffer.from(JSON.stringify({
+      exported_at:  new Date().toISOString(),
+      filter_count: rows.length,
+      filters:      rows
+    }, null, 2));
     await bot.sendDocument(chatId, buf, {
-      caption: `✅ *Backup Filters*\n\n📦 Total: ${rows.length} filters\n📅 ${new Date().toLocaleString('id-ID')}`,
+      caption:    `✅ *Backup Filters*\n\n📦 Total: *${rows.length}* filters\n📅 ${new Date().toLocaleString('id-ID')}`,
       parse_mode: 'Markdown'
     }, { filename: `filters_backup_${Date.now()}.json`, contentType: 'application/json' });
     return;
@@ -791,7 +824,7 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
 }
 
 // ============================================================
-// PENDING ACTION HANDLER (dipanggil dari message handler)
+// PENDING ACTION HANDLER
 // ============================================================
 async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
   const { action } = pending;
@@ -806,7 +839,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       return;
     }
     if (!/^\w+$/.test(filterName)) {
-      const r = await bot.sendMessage(chatId, '⚠️ Nama filter hanya boleh huruf, angka, underscore!', { reply_markup: cancelRow() });
+      const r = await bot.sendMessage(chatId, '⚠️ Nama filter hanya huruf, angka, dan underscore!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
@@ -814,19 +847,16 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
     const source = msg.reply_to_message;
     if (!source) {
       const r = await bot.sendMessage(chatId,
-        `⚠️ Kamu harus *reply ke pesan sumber* yang mau dijadikan filter!\n` +
-        `_Cara: pergi ke pesan yang mau disimpan, reply ke pesan itu, ketik nama filter._`,
+        `⚠️ *Harus reply ke pesan sumber!*\n\n` +
+        `Pergi ke pesan yang mau dijadikan filter, reply ke sana, lalu ketik nama filternya.`,
         { parse_mode: 'Markdown', reply_markup: cancelRow() }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 8);
       return;
     }
-
-    // Tolak jika user reply ke pesan bot sendiri (bukan source yang valid)
     if (source.from?.id === cachedBotId) {
       const r = await bot.sendMessage(chatId,
-        `⚠️ Reply ke *pesan yang mau dijadikan filter*, bukan ke pesan bot!\n` +
-        `Pergi ke pesan sumber, lalu reply ke sana dengan nama filter.`,
+        `⚠️ Jangan reply ke pesan bot!\n\nReply ke *pesan sumber* yang mau dijadikan filter.`,
         { parse_mode: 'Markdown', reply_markup: cancelRow() }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 8);
@@ -836,7 +866,6 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
     const hasMedia = source.photo || source.video || source.document ||
                      source.animation || source.audio || source.voice || source.sticker;
     const hasText  = source.text?.trim() || source.caption?.trim();
-
     if (!hasMedia && !hasText) {
       const r = await bot.sendMessage(chatId, '⚠️ Pesan sumber harus ada teks atau media!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -860,9 +889,9 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       sticker:   source.sticker    ? source.sticker.file_id    : null,
       created_by: userId
     };
-    if (source.entities?.length)         filterData.entities         = source.entities;
-    if (source.caption_entities?.length) filterData.caption_entities = source.caption_entities;
-    if (source.reply_markup?.inline_keyboard) filterData.buttons     = source.reply_markup.inline_keyboard;
+    if (source.entities?.length)             filterData.entities         = source.entities;
+    if (source.caption_entities?.length)     filterData.caption_entities = source.caption_entities;
+    if (source.reply_markup?.inline_keyboard) filterData.buttons         = source.reply_markup.inline_keyboard;
 
     await db.upsertFilter(filterData);
     pendingActions.delete(userId);
@@ -911,7 +940,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
     const results = await db.searchFilters(term);
     pendingActions.delete(userId);
     if (results.length === 0) {
-      const r = await bot.sendMessage(chatId, `🔍 Tidak ada filter yang cocok dengan *${term}*.`,
+      const r = await bot.sendMessage(chatId, `🔍 Tidak ada filter cocok dengan *${term}*.`,
         { parse_mode: 'Markdown', reply_markup: kb.backKeyboard('filter_menu') }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -998,7 +1027,61 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
     return;
   }
 
-  // Unknown action — clear dan ignore
+  // ---- timeout_user ----
+  if (action === 'timeout_user') {
+    const parts = text.trim().split(/\s+/);
+    let targetId, minutes;
+
+    if (msg.reply_to_message && parts.length === 1) {
+      // Cara 2: reply ke pesan user, ketik menit
+      targetId = msg.reply_to_message.from?.id;
+      minutes  = parseInt(parts[0]);
+    } else if (parts.length === 2) {
+      // Cara 1: ketik "USER_ID MENIT"
+      targetId = parseInt(parts[0]);
+      minutes  = parseInt(parts[1]);
+    }
+
+    if (!targetId || isNaN(targetId)) {
+      const r = await bot.sendMessage(chatId,
+        `⚠️ Format salah!\n\n` +
+        `Cara 1: \`USER_ID MENIT\`\n` +
+        `Cara 2: reply ke pesan user → ketik menit`,
+        { parse_mode: 'Markdown', reply_markup: cancelRow('admin_tools') }
+      );
+      autoDeleteMessage(bot, chatId, r.message_id, 8);
+      return;
+    }
+    if (!minutes || isNaN(minutes) || minutes < 1 || minutes > 1440) {
+      const r = await bot.sendMessage(chatId, '⚠️ Durasi timeout: 1–1440 menit (max 24 jam)',
+        { reply_markup: cancelRow('admin_tools') }
+      );
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    if (isAdmin(targetId)) {
+      const r = await bot.sendMessage(chatId, '❌ Tidak bisa timeout admin/owner!',
+        { reply_markup: cancelRow('admin_tools') }
+      );
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+
+    pendingActions.delete(userId);
+
+    // Minta konfirmasi sebelum eksekusi
+    const r = await bot.sendMessage(chatId,
+      `⚠️ *Konfirmasi Timeout*\n\n` +
+      `👤 User ID: \`${targetId}\`\n` +
+      `⏰ Durasi: *${minutes} menit*\n\n` +
+      `Lanjutkan?`,
+      { parse_mode: 'Markdown', reply_markup: kb.timeoutConfirmKeyboard(targetId, minutes) }
+    );
+    autoDeleteMessage(bot, chatId, r.message_id, 30);
+    return;
+  }
+
+  // Unknown action — clear
   pendingActions.delete(userId);
 }
 
@@ -1012,7 +1095,7 @@ function startDailyStats(bot) {
   if (next <= now) next.setDate(next.getDate() + 1);
 
   const delay = next - now;
-  console.log(`📊 Daily stats: ${next.toLocaleString('id-ID')}`);
+  console.log(`📊 Daily stats dijadwalkan: ${next.toLocaleString('id-ID')}`);
 
   setTimeout(async () => {
     await sendDailyStats(bot);
@@ -1031,7 +1114,9 @@ async function sendDailyStats(bot) {
     const up     = process.uptime();
     const stats  = ai.getAIStats();
     const convs  = ai.getAIConversations();
-    const sr     = stats.totalRequests > 0 ? ((stats.successfulResponses / stats.totalRequests) * 100).toFixed(1) : '0.0';
+    const sr     = stats.totalRequests > 0
+      ? ((stats.successfulResponses / stats.totalRequests) * 100).toFixed(1)
+      : '0.0';
 
     await bot.sendMessage(OWNER_ID,
       `📊 *Daily Bot Stats*\n\n` +
@@ -1039,14 +1124,14 @@ async function sendDailyStats(bot) {
       `🎯 Filters: ${filterCount}\n` +
       `👥 Admins: ${admins.length}\n` +
       `📊 Users Tracked: ${analyticsCount}\n` +
-      `⏱️ Uptime: ${Math.floor(up/3600)}h ${Math.floor((up%3600)/60)}m\n\n` +
-      `${AI_ENABLED ? `🤖 *AI:* ${stats.totalRequests} req | ${sr}% success | ${convs.size} convs\n\n` : ''}` +
+      `⏱️ Uptime: ${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m\n\n` +
+      `${AI_ENABLED ? `🤖 *AI:* ${stats.totalRequests} req | ${sr}% | ${convs.size} convs\n\n` : ''}` +
       `🔔 Welcomes: ${notifStats.welcomesSent} | Alerts: ${notifStats.alertsSent}\n\n` +
-      `✅ Bot Status: Online 🚀`,
+      `✅ Status: Online 🚀`,
       { parse_mode: 'Markdown' }
     );
     notifStats.dailyStatsSent++;
-    console.log('📊 Daily stats sent');
+    console.log('📊 Daily stats sent to owner');
   } catch (e) {
     console.error('❌ Daily stats failed:', e.message);
   }
