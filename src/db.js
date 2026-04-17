@@ -56,8 +56,7 @@ async function upsertFilter(data) {
        sticker          = EXCLUDED.sticker,
        entities         = EXCLUDED.entities,
        caption_entities = EXCLUDED.caption_entities,
-       buttons          = EXCLUDED.buttons,
-       created_by       = EXCLUDED.created_by`,
+       buttons          = EXCLUDED.buttons`,
     [
       name.toLowerCase(), text || null,
       photo || null, video || null, doc || null,

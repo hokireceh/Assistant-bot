@@ -161,10 +161,11 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• 🗑️ Hapus — ketik nama filter\n` +
     `• 📋 Daftar — pagination 15/halaman\n` +
     `• 🔍 Cari — keyword search\n` +
-    `• 📋 Clone — ketik: \`asal tujuan\`\n` +
-    `• ✏️ Rename — ketik: \`lama baru\`\n\n` +
+    `• 📋 Clone — ketik: \`asal | tujuan\`\n` +
+    `• ✏️ Rename — ketik: \`lama | baru\`\n\n` +
     `*💡 Cara trigger filter:*\n` +
-    `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
+    `• Tanpa spasi: ketik \`!nama\` atau \`nama\`\n` +
+    `• Dengan spasi: wajib \`!nama filter\`\n\n` +
     `*🌐 Translate:*\n` +
     `• Tekan 🌐 Translate → kirim teks\n` +
     `• Auto-detect bahasa (Indonesia ↔ English)\n` +
@@ -512,8 +513,10 @@ function setupHandlers(bot) {
     }
 
     // ---- Filter Trigger ----
-    const potentialName = text.startsWith('!') ? text.substring(1).trim().toLowerCase() : text.trim().toLowerCase();
-    if (potentialName && potentialName.length >= 2 && !/\s/.test(potentialName)) {
+    const hasPrefix = text.startsWith('!');
+    const potentialName = (hasPrefix ? text.substring(1).trim() : text.trim()).toLowerCase().replace(/\s+/g, ' ');
+    // Nama tanpa spasi: bisa dipicu dengan/tanpa "!" — nama dengan spasi: WAJIB pakai "!"
+    if (potentialName && potentialName.length >= 2 && (hasPrefix || !/\s/.test(potentialName))) {
       const filter = await db.getFilter(potentialName).catch(() => null);
       if (filter) {
         if (!checkRateLimit(userId)) {
@@ -890,8 +893,8 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
-  if (data.startsWith('filter_confirm_del:')) {
-    const name = data.split(':')[1];
+  if (data.startsWith('fdel:')) {
+    const name = data.slice(5);
     await db.deleteFilter(name);
     await bot.editMessageText(
       `✅ Filter *${name}* berhasil dihapus!`,
@@ -925,7 +928,7 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   if (data === 'filter_clone') {
     setPending(userId, 'clone_filter');
     await bot.editMessageText(
-      `📋 *Clone Filter*\n\nKetik: \`nama_asal nama_baru\`\n_Contoh: \`promo promo2\`_`,
+      `📋 *Clone Filter*\n\nKetik: \`nama asal | nama baru\`\n_Contoh: \`foto promo | foto promo2\`_`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
@@ -935,7 +938,7 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   if (data === 'filter_rename') {
     setPending(userId, 'rename_filter');
     await bot.editMessageText(
-      `✏️ *Rename Filter*\n\nKetik: \`nama_lama nama_baru\`\n_Contoh: \`promo promo_v2\`_`,
+      `✏️ *Rename Filter*\n\nKetik: \`nama lama | nama baru\`\n_Contoh: \`foto promo | foto promo baru\`_`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
@@ -970,15 +973,15 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 
   // ---- add_filter ----
   if (action === 'add_filter') {
-    const filterName = text.trim().toLowerCase().replace(/^!/, '');
+    const filterName = text.replace(/^!/, '').trim().toLowerCase().replace(/\s+/g, ' ');
 
     if (!filterName || filterName.length < 2 || filterName.length > 50) {
       const r = await bot.sendMessage(chatId, '⚠️ Nama filter harus 2–50 karakter!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
-    if (!/^\w+$/.test(filterName)) {
-      const r = await bot.sendMessage(chatId, '⚠️ Nama filter hanya huruf, angka, dan underscore!', { reply_markup: cancelRow() });
+    if (!/^[\w\s]+$/.test(filterName)) {
+      const r = await bot.sendMessage(chatId, '⚠️ Nama filter hanya huruf, angka, underscore, dan spasi!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
@@ -1045,7 +1048,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 
   // ---- del_filter ----
   if (action === 'del_filter') {
-    const filterName = text.trim().toLowerCase().replace(/^!/, '');
+    const filterName = text.replace(/^!/, '').trim().toLowerCase().replace(/\s+/g, ' ');
     if (!filterName) {
       const r = await bot.sendMessage(chatId, '⚠️ Ketik nama filter yang mau dihapus!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -1101,9 +1104,9 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 
   // ---- clone_filter ----
   if (action === 'clone_filter') {
-    const parts = text.trim().split(/\s+/);
-    if (parts.length !== 2) {
-      const r = await bot.sendMessage(chatId, '⚠️ Format: `nama_asal nama_baru`',
+    const parts = text.split('|').map(p => p.trim().toLowerCase().replace(/\s+/g, ' '));
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      const r = await bot.sendMessage(chatId, '⚠️ Format: `nama asal | nama baru`',
         { parse_mode: 'Markdown', reply_markup: cancelRow() }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -1114,7 +1117,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       autoDeleteMessage(bot, chatId, r.message_id, 3);
       return;
     }
-    const [src, dst] = parts.map(p => p.toLowerCase());
+    const [src, dst] = parts;
     const [srcOk, dstOk] = await Promise.all([db.filterExists(src), db.filterExists(dst)]);
     if (!srcOk) {
       const r = await bot.sendMessage(chatId, `⚠️ Filter *${src}* tidak ditemukan!`,
@@ -1142,9 +1145,9 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 
   // ---- rename_filter ----
   if (action === 'rename_filter') {
-    const parts = text.trim().split(/\s+/);
-    if (parts.length !== 2) {
-      const r = await bot.sendMessage(chatId, '⚠️ Format: `nama_lama nama_baru`',
+    const parts = text.split('|').map(p => p.trim().toLowerCase().replace(/\s+/g, ' '));
+    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+      const r = await bot.sendMessage(chatId, '⚠️ Format: `nama lama | nama baru`',
         { parse_mode: 'Markdown', reply_markup: cancelRow() }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -1155,7 +1158,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       autoDeleteMessage(bot, chatId, r.message_id, 3);
       return;
     }
-    const [oldN, newN] = parts.map(p => p.toLowerCase());
+    const [oldN, newN] = parts;
     const [oldOk, newOk] = await Promise.all([db.filterExists(oldN), db.filterExists(newN)]);
     if (!oldOk) {
       const r = await bot.sendMessage(chatId, `⚠️ Filter *${oldN}* tidak ditemukan!`,
@@ -1287,8 +1290,8 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 function startDailyStats(bot) {
   const now  = new Date();
   const next = new Date();
-  next.setHours(9, 0, 0, 0);
-  if (next <= now) next.setDate(next.getDate() + 1);
+  next.setUTCHours(2, 0, 0, 0); // 02:00 UTC = 09:00 WIB (UTC+7)
+  if (next <= now) next.setUTCDate(next.getUTCDate() + 1);
 
   const delay = next - now;
   console.log(`📊 Daily stats dijadwalkan: ${next.toLocaleString('id-ID')}`);

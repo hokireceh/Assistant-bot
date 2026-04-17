@@ -185,7 +185,7 @@ function confirmDeleteKeyboard(filterName) {
   return {
     inline_keyboard: [
       [
-        { text: '✅ Ya, Hapus', callback_data: `filter_confirm_del:${filterName}` },
+        { text: '✅ Ya, Hapus', callback_data: `fdel:${filterName}` },
         { text: '❌ Batal',     callback_data: 'filter_menu' }
       ]
     ]
