@@ -10,11 +10,11 @@
 | ID | Prioritas | Area | Judul |
 |----|-----------|------|-------|
 | BUG-001 | ✅ FIXED | AI / Security | `sanitizedMessage` tidak digunakan saat kirim ke Groq API |
-| BUG-002 | 🔴 HIGH | Performa | `bot.getMe()` dipanggil setiap pesan di AI handler |
-| BUG-003 | 🔴 HIGH | AI Cleanup | Stale conversation cleanup berdasarkan length, bukan timestamp |
-| BUG-004 | 🔴 HIGH | AI Reset | `!aireset` hanya reset `used`, tidak reset `rpmUsed` |
-| BUG-005 | 🟡 MEDIUM | Analytics | Admin di-track sebagai non-admin di `!aireset` dan `!export` |
-| BUG-006 | 🟡 MEDIUM | Admin System | `loadAdminsFromEnv()` tidak otomatis include `OWNER_ID` ke array `admins` |
+| BUG-002 | ✅ FIXED | Performa | `bot.getMe()` dipanggil setiap pesan di AI handler |
+| BUG-003 | ✅ FIXED | AI Cleanup | Stale conversation cleanup berdasarkan length, bukan timestamp |
+| BUG-004 | ✅ FIXED | AI Reset | `!aireset` hanya reset `used`, tidak reset `rpmUsed` |
+| BUG-005 | ✅ FIXED | Analytics | Admin di-track sebagai non-admin di `!aireset` dan `!export` |
+| BUG-006 | ✅ FIXED | Admin System | `loadAdminsFromEnv()` tidak otomatis include `OWNER_ID` ke array `admins` |
 
 ---
 
