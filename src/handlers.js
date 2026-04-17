@@ -9,6 +9,71 @@ const {
 } = require('./utils');
 
 // ============================================================
+// TRANSLATE HELPERS — MyMemory API, bebas key, semua user
+// ============================================================
+async function translateText(text, fromLang, toLang) {
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${fromLang}|${toLang}`;
+  const res  = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error('Translation API error');
+  const data = await res.json();
+  if (data.responseStatus !== 200) throw new Error(data.responseDetails || 'Translation failed');
+  return data.responseData.translatedText;
+}
+
+function detectTranslateLang(text) {
+  const idWords = ['apa','yang','ini','itu','dan','atau','saya','kamu','dengan','untuk',
+                   'dari','ke','di','ya','tidak','bisa','akan','sudah','juga','gue','lo','aku'];
+  const lc    = text.toLowerCase().split(/\s+/);
+  const idCnt = idWords.filter(w => lc.includes(w)).length;
+  return idCnt >= 2 ? 'id' : 'en';
+}
+
+async function handleTranslate(bot, chatId, userId, msg, text) {
+  const inputText = text.trim();
+  if (!inputText || inputText.length < 2) {
+    const r = await bot.sendMessage(chatId, '⚠️ Teks terlalu pendek! Minimal 2 karakter ya.');
+    autoDeleteMessage(bot, chatId, r.message_id, 5);
+    return;
+  }
+  if (inputText.length > 500) {
+    const r = await bot.sendMessage(chatId, '⚠️ Maksimal 500 karakter per terjemahan!');
+    autoDeleteMessage(bot, chatId, r.message_id, 5);
+    return;
+  }
+
+  pendingActions.delete(userId);
+
+  try {
+    await bot.sendChatAction(chatId, 'typing');
+    const detectedLang = detectTranslateLang(inputText);
+    const toLang       = detectedLang === 'id' ? 'en' : 'id';
+    const toLangLabel  = toLang === 'id' ? '🇮🇩 Indonesia' : '🇬🇧 English';
+
+    const translated = await translateText(inputText, detectedLang, toLang);
+
+    const preview = inputText.length > 60 ? inputText.substring(0, 60) + '…' : inputText;
+    const r = await bot.sendMessage(chatId,
+      `🌐 *Hasil → ${toLangLabel}*\n\n${translated}\n\n_Teks asli: ${preview}_`,
+      {
+        parse_mode: 'Markdown',
+        reply_to_message_id: msg?.message_id,
+        reply_markup: {
+          inline_keyboard: [[{ text: '🔄 Translate Lagi', callback_data: 'translate_menu' }]]
+        }
+      }
+    );
+    autoDeleteMessage(bot, chatId, r.message_id, 30);
+  } catch (err) {
+    console.error('❌ Translate error:', err.message);
+    const r = await bot.sendMessage(chatId,
+      `❌ Gagal menerjemahkan.\n_${err.message.substring(0, 80)}_`,
+      { parse_mode: 'Markdown' }
+    );
+    autoDeleteMessage(bot, chatId, r.message_id, 8);
+  }
+}
+
+// ============================================================
 // PENDING ACTIONS — multi-step flows
 // TTL 10 menit, auto-cleanup setiap 5 menit
 // ============================================================
@@ -88,8 +153,10 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• 🎯 Filter — kelola filter\n` +
     `• 📊 Status — info bot\n` +
     `• ⚙️ Tools — admin tools (timeout, analytics)\n` +
+    `• 🤖 Chat AI — sesi chat dengan AI Hoki\n` +
+    `• 🌐 Translate — terjemahkan teks (semua user)\n` +
     `• ❓ Bantuan — panduan ini\n\n` +
-    `*🎯 Filter Management:*\n` +
+    `*🎯 Filter Management (admin only):*\n` +
     `• ➕ Tambah — reply ke pesan sumber, ketik nama\n` +
     `• 🗑️ Hapus — ketik nama filter\n` +
     `• 📋 Daftar — pagination 15/halaman\n` +
@@ -98,10 +165,14 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• ✏️ Rename — ketik: \`lama baru\`\n\n` +
     `*💡 Cara trigger filter:*\n` +
     `Ketik \`!namafilter\` atau \`namafilter\`\n\n` +
+    `*🌐 Translate:*\n` +
+    `• Tekan 🌐 Translate → kirim teks\n` +
+    `• Auto-detect bahasa (Indonesia ↔ English)\n` +
+    `• Tersedia untuk semua user\n\n` +
     `*⏱️ Timeout user:*\n` +
     `⚙️ Tools → ⏱️ Timeout User → ketik \`ID MENIT\`\n` +
     `atau reply ke pesan user, ketik MENIT\n\n` +
-    `${AI_ENABLED ? '*🤖 AI Hoki:*\n• Private: langsung chat\n• Group: reply ke pesan bot\n\n' : ''}` +
+    `${AI_ENABLED ? '*🤖 AI Hoki:*\n• Tekan 🤖 Chat AI → ketik pertanyaan\n• Sesi aktif hingga tekan tombol lain\n• Group: reply ke pesan bot\n\n' : ''}` +
     `${isOwner(userId) ? '*👑 Owner Panel:*\n♻️ Reset AI | ⚙️ Health | 💾 Export\n\n' : ''}` +
     `_Semua aksi via tombol — tidak perlu command!_`;
 
@@ -184,10 +255,13 @@ async function sendFilter(bot, chatId, filter) {
   else if (filter.audio)     await bot.sendAudio    (chatId, filter.audio,     captionOpts());
   else if (filter.voice)     await bot.sendVoice    (chatId, filter.voice,     captionOpts());
   else if (filter.sticker) {
-    await bot.sendSticker(chatId, filter.sticker);
+    const stickerOpts = {};
+    if (replyMarkup && !formattedText?.trim()) stickerOpts.reply_markup = replyMarkup;
+    await bot.sendSticker(chatId, filter.sticker, stickerOpts);
     if (formattedText?.trim()) {
       const o = {};
       if (textParseMode) o.parse_mode = textParseMode;
+      if (replyMarkup)   o.reply_markup = replyMarkup;
       await bot.sendMessage(chatId, formattedText, o);
     }
   } else if (formattedText?.trim()) {
@@ -239,8 +313,14 @@ function setupHandlers(bot) {
     if (!isAdmin(userId)) {
       await db.trackUserAccess(userId, msg.from.username, msg.from.first_name, msg.from.last_name)
         .catch(() => {});
-      const r = await bot.sendMessage(chatId, '❌ Bot ini hanya untuk admin!');
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      const r = await bot.sendMessage(chatId,
+        `❌ Bot ini hanya untuk admin!\n\n🌐 Kamu tetap bisa pakai fitur *Translate*:`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '🌐 Translate', callback_data: 'translate_menu' }]] }
+        }
+      );
+      autoDeleteMessage(bot, chatId, r.message_id, 30);
       return;
     }
 
@@ -267,6 +347,26 @@ function setupHandlers(bot) {
       await bot.answerCallbackQuery(query.id).catch(() => {});
     }
 
+    // translate_menu & translate_cancel — terbuka untuk SEMUA user
+    if (data === 'translate_menu') {
+      setPending(userId, 'translate');
+      await bot.editMessageText(
+        `🌐 *Translate*\n\nKirim teks yang mau diterjemahkan:\n_Auto-detect: Indonesia ↔ English · Maks 500 karakter_`,
+        {
+          chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'translate_cancel' }]] }
+        }
+      ).catch(() => {});
+      return;
+    }
+    if (data === 'translate_cancel') {
+      pendingActions.delete(userId);
+      await bot.editMessageText('❌ Translate dibatalkan.',
+        { chat_id: chatId, message_id: messageId }
+      ).catch(() => bot.sendMessage(chatId, '❌ Dibatalkan.').catch(() => {}));
+      return;
+    }
+
     if (!isAdmin(userId)) return;
 
     try {
@@ -290,6 +390,19 @@ function setupHandlers(bot) {
 
     // Slash commands ditangani oleh onText di atas
     if (text.startsWith('/')) return;
+
+    // Pending translate — SEMUA user bisa, sebelum admin gate
+    {
+      const pendingT = pendingActions.get(userId);
+      if (pendingT?.action === 'translate') {
+        if (!pendingT.expiresAt || Date.now() <= pendingT.expiresAt) {
+          autoDeleteMessage(bot, chatId, msg.message_id, 3);
+          await handleTranslate(bot, chatId, userId, msg, text);
+          return;
+        }
+        pendingActions.delete(userId);
+      }
+    }
 
     // Skip reserved bang words (jangan proses sebagai AI/filter)
     if (text.startsWith('!')) {
@@ -358,6 +471,33 @@ function setupHandlers(bot) {
       await sendBantuan(bot, chatId, userId);
       return;
     }
+    if (text === '🤖 Chat AI') {
+      autoDeleteMessage(bot, chatId, msg.message_id, 1);
+      if (!AI_ENABLED) {
+        const r = await bot.sendMessage(chatId, '⚠️ AI Hoki belum aktif. Set GROQ_API_KEY dulu ya!');
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+        return;
+      }
+      setPending(userId, 'chat_ai');
+      await bot.sendMessage(chatId,
+        `🤖 *Sesi Chat AI Aktif!*\n\nKetik pertanyaanmu sekarang.\n_Tekan tombol menu lain untuk keluar._`,
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+    if (text === '🌐 Translate') {
+      pendingActions.delete(userId);
+      autoDeleteMessage(bot, chatId, msg.message_id, 1);
+      setPending(userId, 'translate');
+      await bot.sendMessage(chatId,
+        `🌐 *Translate*\n\nKirim teks yang mau diterjemahkan:\n_Auto-detect: Indonesia ↔ English · Maks 500 karakter_`,
+        {
+          parse_mode: 'Markdown',
+          reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'translate_cancel' }]] }
+        }
+      );
+      return;
+    }
 
     // ---- Pending Actions ----
     const pending = pendingActions.get(userId);
@@ -399,13 +539,12 @@ function setupHandlers(bot) {
       }
     }
 
-    // ---- AI Hoki ----
+    // ---- AI Hoki (Group only: reply ke pesan bot) ----
+    // Private chat: pakai tombol 🤖 Chat AI dari menu (pending chat_ai)
     if (!AI_ENABLED || !msg.text) return;
-
-    if (msg.chat.type === 'group' || msg.chat.type === 'supergroup') {
-      if (!cachedBotId) return;
-      if (msg.reply_to_message?.from?.id !== cachedBotId) return;
-    }
+    if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
+    if (!cachedBotId) return;
+    if (msg.reply_to_message?.from?.id !== cachedBotId) return;
 
     const userMsg = msg.text.trim();
     if (userMsg.length < 2) return;
@@ -912,6 +1051,11 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
+    if (!checkRateLimit(userId)) {
+      const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.');
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
     const exists = await db.filterExists(filterName);
     if (!exists) {
       const r = await bot.sendMessage(chatId, `⚠️ Filter *${filterName}* tidak ditemukan!`,
@@ -965,6 +1109,11 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
+    if (!checkRateLimit(userId)) {
+      const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.');
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
     const [src, dst] = parts.map(p => p.toLowerCase());
     const [srcOk, dstOk] = await Promise.all([db.filterExists(src), db.filterExists(dst)]);
     if (!srcOk) {
@@ -999,6 +1148,11 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
         { parse_mode: 'Markdown', reply_markup: cancelRow() }
       );
       autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    if (!checkRateLimit(userId)) {
+      const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.');
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
       return;
     }
     const [oldN, newN] = parts.map(p => p.toLowerCase());
@@ -1078,6 +1232,48 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       { parse_mode: 'Markdown', reply_markup: kb.timeoutConfirmKeyboard(targetId, minutes) }
     );
     autoDeleteMessage(bot, chatId, r.message_id, 30);
+    return;
+  }
+
+  // ---- chat_ai ----
+  if (action === 'chat_ai') {
+    if (!AI_ENABLED) {
+      const r = await bot.sendMessage(chatId, '⚠️ AI Hoki belum aktif. Set GROQ_API_KEY dulu ya!');
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      pendingActions.delete(userId);
+      return;
+    }
+    const userMsg = text?.trim();
+    if (!userMsg || userMsg.length < 2) return;
+
+    const rl = ai.checkAIRateLimit(userId);
+    if (!rl.allowed) {
+      const r = await bot.sendMessage(chatId, `⏱️ Tunggu ${rl.remaining} detik lagi yaa~ 😊`);
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
+    // Jangan hapus pending — sesi AI tetap aktif sampai user tekan tombol lain
+    try {
+      await bot.sendChatAction(chatId, 'typing');
+      const { response } = await ai.callGroqAPI(userMsg, userId);
+      await bot.sendMessage(chatId, response, { reply_to_message_id: msg.message_id });
+    } catch (err) {
+      console.error('❌ AI Error (pending):', err.message);
+      let errMsg = 'Maaf nih~ Lagi error. Coba lagi yaa 🙏';
+      if (err.message.includes('429') || err.message.includes('rate limit')) {
+        errMsg = 'Lagi banyak yang pakai AI nih~ Tunggu sebentar yaa 🙏';
+      } else if (err.message.includes('rate limited')) {
+        errMsg = err.message;
+      }
+      const r = await bot.sendMessage(chatId, errMsg, { reply_to_message_id: msg.message_id });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+    }
+    return;
+  }
+
+  // ---- translate (via pending) ----
+  if (action === 'translate') {
+    await handleTranslate(bot, chatId, userId, msg, text);
     return;
   }
 

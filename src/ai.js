@@ -161,9 +161,10 @@ async function callGroqAPI(userMessage, userId) {
     { role: 'user', content: sanitizedMessage }
   ];
 
-  // AbortController untuk timeout 30 detik (FIX-020)
-  const controller = new AbortController();
-  const timeout    = setTimeout(() => controller.abort(), 30000);
+  // AbortController untuk timeout 30 detik
+  const controller   = new AbortController();
+  const timeout      = setTimeout(() => controller.abort(), 30000);
+  let alreadyCounted = false;
 
   try {
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
@@ -187,14 +188,15 @@ async function callGroqAPI(userMessage, userId) {
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
       aiStats.failedResponses++;
+      alreadyCounted = true;
       throw new Error(`Groq API ${response.status}: ${errBody.substring(0, 100)}`);
     }
 
     const data = await response.json();
 
-    // Null check untuk choices (FIX-021)
     if (!data?.choices?.[0]?.message?.content) {
       aiStats.failedResponses++;
+      alreadyCounted = true;
       throw new Error('Groq API returned empty response');
     }
 
@@ -218,14 +220,9 @@ async function callGroqAPI(userMessage, userId) {
 
   } catch (err) {
     clearTimeout(timeout);
-    // Increment failed jika belum diincrement
+    if (!alreadyCounted) aiStats.failedResponses++;
     if (err.name === 'AbortError') {
-      aiStats.failedResponses++;
       throw new Error('Groq API timeout (30s) — coba lagi yaa 🙏');
-    }
-    // Jika belum diincrement di atas (non-ok response sudah diincrement)
-    if (!err.message.startsWith('Groq API') && !err.message.startsWith('Groq API returned')) {
-      aiStats.failedResponses++;
     }
     throw err;
   }

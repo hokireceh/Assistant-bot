@@ -57,7 +57,6 @@ async function upsertFilter(data) {
        entities         = EXCLUDED.entities,
        caption_entities = EXCLUDED.caption_entities,
        buttons          = EXCLUDED.buttons,
-       created_at       = NOW(),
        created_by       = EXCLUDED.created_by`,
     [
       name.toLowerCase(), text || null,

@@ -13,7 +13,7 @@ dengan cara:
 Apakah logika ini benar, dan bagaimana implementasinya di kode kita.
 
 Untuk catatan perubahan tulis ke docs/audit/audit-{nama audit}.md
-Untuk referensi cek ke docs/{nama dex}-docs/ jika ada.
+Untuk referensi cek ke docs/{nama}-docs/ jika ada.
 
 Catatan
 Queue Issue (Fix satu per satu, urut prioritas)
@@ -31,7 +31,6 @@ Aturan Tambahan:
 Mulai:
   Mulai dari issue pertama.
   Propose fix setelah konfirmasi kode bermasalah ditemukan.
-```
 
 ---
 
@@ -124,7 +123,6 @@ Sumber: https://console.groq.com/docs/models
 
 ## Template Dokumen Audit
 
-```markdown
 # Audit Harian Bot Hoki — v{N}
 **Tanggal:** YYYY-MM-DD
 **Auditor:** Agent

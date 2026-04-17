@@ -17,6 +17,10 @@ function adminMenuKeyboard() {
         { text: '⚙️ Tools' }
       ],
       [
+        { text: '🤖 Chat AI' },
+        { text: '🌐 Translate' }
+      ],
+      [
         { text: '❓ Bantuan' }
       ]
     ],

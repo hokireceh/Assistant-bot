@@ -65,7 +65,7 @@ const AI_MODELS = [
 ];
 
 const GUARD_MODEL = {
-  name: 'meta-llama/llama-guard-4-12b',
+  name: 'meta-llama/llama-prompt-guard-2-86m',
   dailyLimit: 14400,
   tokensPerMin: 15000,
   tokensPerDay: 500000,
