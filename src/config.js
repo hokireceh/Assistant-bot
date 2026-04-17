@@ -1,15 +1,4 @@
 require('dotenv').config();
-const dns = require('dns');
-const https = require('https');
-
-dns.setDefaultResultOrder('ipv4first');
-
-const httpsAgent = new https.Agent({
-  family: 4,
-  keepAlive: true,
-  keepAliveMsecs: 30000,
-  timeout: 120000
-});
 
 const OWNER_ID = parseInt(process.env.OWNER_ID);
 
@@ -82,7 +71,6 @@ module.exports = {
   OWNER_ID,
   GROQ_API_KEY: process.env.GROQ_API_KEY || '',
   AI_ENABLED: (process.env.GROQ_API_KEY || '').length > 0,
-  httpsAgent,
   RATE_LIMIT_WINDOW: 1000,
   MAX_REQUESTS: 5,
   AI_COOLDOWN_MS: 3000,

@@ -157,7 +157,7 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• 🌐 Translate — terjemahkan teks (semua user)\n` +
     `• ❓ Bantuan — panduan ini\n\n` +
     `*🎯 Filter Management (admin only):*\n` +
-    `• ➕ Tambah — reply ke pesan sumber, ketik nama\n` +
+    `• ➕ Tambah — ketik nama → kirim konten (2 langkah)\n` +
     `• 🗑️ Hapus — ketik nama filter\n` +
     `• 📋 Daftar — pagination 15/halaman\n` +
     `• 🔍 Cari — keyword search\n` +
@@ -868,18 +868,19 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
   // ==========================================================
 
   if (data === 'filter_add') {
-    setPending(userId, 'add_filter');
+    setPending(userId, 'add_filter_name');
     await bot.editMessageText(
-      `➕ *Tambah Filter*\n\n` +
-      `*Langkah-langkah:*\n` +
-      `1️⃣ Pergi ke pesan yang mau dijadikan filter\n` +
-      `2️⃣ Reply pesan tersebut\n` +
-      `3️⃣ Ketik nama filter di kolom reply kamu\n\n` +
-      `_Contoh: reply ke foto promo → ketik_ \`promo\`\n\n` +
-      `⏳ Batal otomatis dalam 10 menit`,
+      `➕ *Tambah Filter — Langkah 1/2*\n\n_Menunggu nama filter..._`,
       { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
         reply_markup: cancelRow() }
     ).catch(() => {});
+    await bot.sendMessage(chatId,
+      `📝 *Ketik nama filter baru:*\n` +
+      `_Boleh pakai spasi · 2–50 karakter_\n\n` +
+      `Contoh: \`promo\` atau \`foto promo\`\n\n` +
+      `⏳ Batal dalam 10 menit`,
+      { parse_mode: 'Markdown', reply_markup: cancelRow() }
+    );
     return;
   }
 
@@ -971,8 +972,8 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
 async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
   const { action } = pending;
 
-  // ---- add_filter ----
-  if (action === 'add_filter') {
+  // ---- add_filter_name (step 1/2) — terima nama dari user ----
+  if (action === 'add_filter_name') {
     const filterName = text.replace(/^!/, '').trim().toLowerCase().replace(/\s+/g, ' ');
 
     if (!filterName || filterName.length < 2 || filterName.length > 50) {
@@ -986,30 +987,28 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       return;
     }
 
-    const source = msg.reply_to_message;
-    if (!source) {
-      const r = await bot.sendMessage(chatId,
-        `⚠️ *Harus reply ke pesan sumber!*\n\n` +
-        `Pergi ke pesan yang mau dijadikan filter, reply ke sana, lalu ketik nama filternya.`,
-        { parse_mode: 'Markdown', reply_markup: cancelRow() }
-      );
-      autoDeleteMessage(bot, chatId, r.message_id, 8);
-      return;
-    }
-    if (source.from?.id === cachedBotId) {
-      const r = await bot.sendMessage(chatId,
-        `⚠️ Jangan reply ke pesan bot!\n\nReply ke *pesan sumber* yang mau dijadikan filter.`,
-        { parse_mode: 'Markdown', reply_markup: cancelRow() }
-      );
-      autoDeleteMessage(bot, chatId, r.message_id, 8);
-      return;
-    }
+    setPending(userId, 'add_filter_content', { name: filterName });
+    await bot.sendMessage(chatId,
+      `✅ Nama: *${filterName}*\n\n` +
+      `*Langkah 2/2:* Sekarang kirim konten untuk filter ini.\n` +
+      `_Bisa teks, foto, video, GIF, sticker, audio, dsb_`,
+      { parse_mode: 'Markdown', reply_markup: cancelRow() }
+    );
+    return;
+  }
 
+  // ---- add_filter_content (step 2/2) — terima konten dari user ----
+  if (action === 'add_filter_content') {
+    const filterName = pending.data?.name;
+    if (!filterName) { pendingActions.delete(userId); return; }
+
+    const source   = msg;
     const hasMedia = source.photo || source.video || source.document ||
                      source.animation || source.audio || source.voice || source.sticker;
     const hasText  = source.text?.trim() || source.caption?.trim();
+
     if (!hasMedia && !hasText) {
-      const r = await bot.sendMessage(chatId, '⚠️ Pesan sumber harus ada teks atau media!', { reply_markup: cancelRow() });
+      const r = await bot.sendMessage(chatId, '⚠️ Kirim pesan yang ada teks atau media!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }

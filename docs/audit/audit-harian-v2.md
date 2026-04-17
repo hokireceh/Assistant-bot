@@ -75,11 +75,9 @@
 
 ## Info (Tidak Perlu Fix Segera)
 
-### INFO-1 — Duplikasi `httpsAgent` + `dns.setDefaultResultOrder`
-- `config.js` membuat `httpsAgent` dan memanggil `dns.setDefaultResultOrder('ipv4first')`.
-- `index.js` juga membuat `httpsAgent` sendiri dan memanggil `dns.setDefaultResultOrder`.
-- `httpsAgent` dari `config.js` di-export tapi tidak digunakan oleh `ai.js` (yang pakai native `fetch()`).
-- Tidak menyebabkan bug, hanya dead code. Bisa dibersihkan kapan saja.
+### INFO-1 — ✅ SELESAI — Duplikasi `httpsAgent` + `dns.setDefaultResultOrder`
+- `httpsAgent` dan `dns` import di `config.js` dihapus (dead code, tidak dipakai oleh modul lain).
+- `dns.setDefaultResultOrder('ipv4first')` tetap di `index.js` (process-wide, cukup sekali).
 
 ---
 
