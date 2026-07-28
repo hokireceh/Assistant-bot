@@ -241,6 +241,53 @@ async function sendAutoEphemeral(bot, chatId, userId, text, options = {}, delete
 }
 
 // ============================================================
+// EDIT EPHEMERAL MESSAGE — Bot API 10.2
+// ============================================================
+async function editEphemeralMessageText(chatId, ephemeralMessageId, text, options = {}) {
+  return telegramAPI('editEphemeralMessageText', {
+    chat_id: chatId,
+    ephemeral_message_id: ephemeralMessageId,
+    text,
+    ...options
+  });
+}
+
+async function editEphemeralMessageMedia(chatId, ephemeralMessageId, media, options = {}) {
+  return telegramAPI('editEphemeralMessageMedia', {
+    chat_id: chatId,
+    ephemeral_message_id: ephemeralMessageId,
+    media,
+    ...options
+  });
+}
+
+async function editEphemeralMessageCaption(chatId, ephemeralMessageId, options = {}) {
+  return telegramAPI('editEphemeralMessageCaption', {
+    chat_id: chatId,
+    ephemeral_message_id: ephemeralMessageId,
+    ...options
+  });
+}
+
+async function editEphemeralMessageReplyMarkup(chatId, ephemeralMessageId, options = {}) {
+  return telegramAPI('editEphemeralMessageReplyMarkup', {
+    chat_id: chatId,
+    ephemeral_message_id: ephemeralMessageId,
+    ...options
+  });
+}
+
+// ============================================================
+// DELETE EPHEMERAL MESSAGE — Bot API 10.2
+// ============================================================
+async function deleteEphemeralMessage(chatId, ephemeralMessageId) {
+  return telegramAPI('deleteEphemeralMessage', {
+    chat_id: chatId,
+    ephemeral_message_id: ephemeralMessageId
+  });
+}
+
+// ============================================================
 // SEND MESSAGE DRAFT — streaming partial message (30s preview)
 // ============================================================
 async function sendMessageDraft(chatId, text) {
@@ -405,6 +452,8 @@ module.exports = {
   telegramAPI, sendMessageDraft, sendRichMessage, sendRichMessageDraft, sendChecklist,
   answerGuestQuery,
   sendEphemeral, sendEphemeralRich, sendAutoEphemeral,
+  editEphemeralMessageText, editEphemeralMessageMedia, editEphemeralMessageCaption,
+  editEphemeralMessageReplyMarkup, deleteEphemeralMessage,
   entitiesToRichSegments,
   richBlock, richText, richParagraph, richHeading, richPreformatted,
   richList, richTable, richDivider, richFooter, richBlockquote,
