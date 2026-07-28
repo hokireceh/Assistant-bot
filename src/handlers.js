@@ -362,9 +362,14 @@ function threadOpts(chatId, msg) {
     msg = chatId;
     chatId = msg?.chat?.id;
   }
-  if (msg?.message_thread_id) return { message_thread_id: msg.message_thread_id };
+  if (msg?.message_thread_id) {
+    console.log(`🔍 [TRACE] threadOpts: using msg.message_thread_id=${msg.message_thread_id}`);
+    return { message_thread_id: msg.message_thread_id };
+  }
   const tid = getTopicId(chatId);
+  console.log(`🔍 [TRACE] threadOpts: getTopicId(${chatId})=${tid}`);
   if (tid) return { message_thread_id: tid };
+  console.log(`🔍 [TRACE] threadOpts: NO topic ID found`);
   return {};
 }
 
@@ -410,9 +415,10 @@ function setupHandlers(bot) {
   bot.answerInlineQuery = (...args) => bot.api.answerInlineQuery(...args);
   // onText compat: like node-telegram-bot-api bot.onText(regex, handler)
   bot.onText = (regex, handler) => {
-    bot.on('message:text', (ctx) => {
+    bot.on('message:text', async (ctx, next) => {
       const match = (ctx.msg.text || '').match(regex);
-      if (match) return handler(ctx, match);
+      if (match) await handler(ctx, match);
+      if (next) await next();
     });
   };
 
@@ -636,20 +642,40 @@ function setupHandlers(bot) {
   bot.on('message', async (ctx) => {
     try {
     const msg = ctx.msg;
-    if (!msg.from) return;
-    console.log(`📨 msg received: chat=${msg.chat.id} from=${msg.from.id} text="${(msg.text||'').substring(0,40)}" reply=${!!msg.reply_to_message}`);
-
+    if (!msg.from) {
+      console.log(`🔍 [DEEP] msg.on('message'): NO msg.from — SKIPPING. Keys: ${Object.keys(msg||{}).join(',')}`);
+      return;
+    }
     const chatId = msg.chat.id;
     const userId = msg.from.id;
     const text   = msg.text || '';
+    const chatType = msg.chat.type;
+    const isForum = msg.chat.is_forum;
+    const threadId = msg.message_thread_id || 0;
+    const hasReply = !!msg.reply_to_message;
+    const replyToId = msg.reply_to_message?.message_id;
+    const replyFromId = msg.reply_to_message?.from?.id;
+    const isReplyToBot = replyFromId === cachedBotId;
+    
+    console.log(`📨 [DEEP] msg received:`);
+    console.log(`  chatId=${chatId} userId=${userId} chatType=${chatType}`);
+    console.log(`  isForum=${isForum} threadId=${threadId}`);
+    console.log(`  text="${text.substring(0,50)}" hasReply=${hasReply}`);
+    if (hasReply) console.log(`  replyToMsg=${replyToId} replyFromId=${replyFromId} isReplyToBot=${isReplyToBot} cachedBotId=${cachedBotId}`);
+    console.log(`  msgId=${msg.message_id} date=${msg.date} text_len=${(msg.text||'').length} caption_len=${(msg.caption||'').length}`);
+    console.log(`  newChatMembers=${!!msg.new_chat_members} serviceMsg=${!!msg.service}`);
 
     // Slash commands ditangani oleh onText di atas
-    if (text.startsWith('/')) return;
+    if (text.startsWith('/')) {
+      console.log(`🔍 [DEEP] → SKIP: slash command`);
+      return;
+    }
 
     // Pending translate — SEMUA user bisa, sebelum admin gate
     {
       const pendingT = pendingActions.get(userId);
       if (pendingT?.action === 'translate') {
+        console.log(`🔍 [DEEP] → PENDING TRANSLATE detected`);
         if (!pendingT.expiresAt || Date.now() <= pendingT.expiresAt) {
           autoDeleteMessage(bot, chatId, msg.message_id, 3);
           await handleTranslate(bot, chatId, userId, msg, text);
@@ -662,11 +688,16 @@ function setupHandlers(bot) {
     // Skip reserved bang words (jangan proses sebagai AI/filter)
     if (text.startsWith('!')) {
       const cmd = text.substring(1).split(/\s+/)[0].toLowerCase();
-      if (RESERVED_BANG.has(cmd)) return;
+      if (RESERVED_BANG.has(cmd)) {
+        console.log(`🔍 [DEEP] → SKIP: reserved bang word "${cmd}"`);
+        return;
+      }
     }
 
     // Gate non-admin — track dan silent reject
-    if (!isAdmin(userId)) {
+    const adminCheck = isAdmin(userId);
+    console.log(`🔍 [DEEP] isAdmin(${userId}) = ${adminCheck}`);
+    if (!adminCheck) {
       const pName = text.startsWith('!') ? text.substring(1).trim().toLowerCase() : text.trim().toLowerCase();
       if (pName && !pName.includes(' ') && pName.length >= 2) {
         const exists = await db.filterExists(pName).catch(() => false);
@@ -676,11 +707,13 @@ function setupHandlers(bot) {
           console.log(`🚫 Non-admin ${userId} tried filter: ${pName}`);
         }
       }
+      console.log(`🚫 [DEEP] → SILENT REJECT: non-admin userId=${userId}`);
       return;
     }
 
     // Timeout check
     if (await isTimedOut(userId)) {
+      console.log(`🔍 [DEEP] → TIMEOUT active for userId=${userId}`);
       const rem = await getTimeoutRemaining(userId);
       const isPrivate = msg.chat.type === 'private';
       if (isPrivate) {
@@ -772,10 +805,10 @@ function setupHandlers(bot) {
     const pending = pendingActions.get(userId);
     if (pending) {
       if (pending.expiresAt && Date.now() > pending.expiresAt) {
-        console.log(`⏰ pending expired: user=${userId} action=${pending.action}`);
+        console.log(`🔍 [DEEP] → PENDING ACTION expired: user=${userId} action=${pending.action}`);
         pendingActions.delete(userId);
       } else {
-        console.log(`📋 pending hit: user=${userId} action=${pending.action} text="${text.substring(0, 30)}"`);
+        console.log(`🔍 [DEEP] → PENDING ACTION hit: user=${userId} action=${pending.action}`);
         autoDeleteMessage(bot, chatId, msg.message_id, 3);
         await handlePendingAction(bot, chatId, userId, msg, text, pending);
         return;
@@ -786,48 +819,91 @@ function setupHandlers(bot) {
     const rawText = msg.text || msg.caption || '';
     const hasPrefix = rawText.startsWith('!');
     const potentialName = (hasPrefix ? rawText.substring(1).trim() : rawText.trim()).toLowerCase().replace(/\s+/g, ' ');
-    // Nama tanpa spasi: bisa dipicu dengan/tanpa "!" — nama dengan spasi: WAJIB pakai "!"
+    console.log(`🔍 [DEEP] FILTER TRIGGER CHECK: rawText="${rawText.substring(0,40)}" hasPrefix=${hasPrefix} potentialName="${potentialName}" nameLen=${potentialName.length} hasSpaces=${/\s/.test(potentialName)}`);
+
+    let matchedFilter = null;
+    let matchedName = null;
+
+    // 1) Exact match (tanpa spasi / dengan prefix !)
     if (potentialName && potentialName.length >= 2 && (hasPrefix || !/\s/.test(potentialName))) {
-      const filter = await db.getFilter(potentialName).catch(() => null);
-      if (filter) {
-        if (!checkRateLimit(userId)) {
-          const isPrivate = msg.chat.type === 'private';
-          if (isPrivate) {
-            await sendAutoEphemeral(bot, chatId, userId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg), 3);
-          } else {
-            const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg));
-            autoDeleteMessage(bot, chatId, r.message_id, 3);
+      matchedFilter = await db.getFilter(potentialName).catch(() => null);
+      if (matchedFilter) matchedName = potentialName;
+      console.log(`🔍 [DEEP] Exact match getFilter("${potentialName}") = ${matchedFilter ? 'FOUND' : 'NOT_FOUND'}`);
+    }
+
+    // 2) Substring match — cari nama filter di dalam teks/caption
+    if (!matchedFilter && rawText.trim().length >= 2) {
+      const filterNames = await db.getFilterNames().catch(() => []);
+      const lowerText = rawText.toLowerCase();
+      for (const name of filterNames) {
+        const lowerName = name.toLowerCase();
+        // Cari nama filter sebagai kata utuh (word boundary)
+        const regex = new RegExp(`(?:^|[\\s!])${lowerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[\\s,.:;!?\n]|$)`, 'i');
+        if (regex.test(lowerText)) {
+          matchedFilter = await db.getFilter(name).catch(() => null);
+          if (matchedFilter) {
+            matchedName = name;
+            console.log(`🔍 [DEEP] Substring match found: "${name}" in text`);
+            break;
           }
-          return;
         }
-        autoDeleteMessage(bot, chatId, msg.message_id, 3);
-        try {
-          await sendFilter(bot, chatId, filter, threadOpts(msg));
-        } catch (err) {
-          console.error('❌ Filter error:', potentialName, err.message);
-          const isPrivate = msg.chat.type === 'private';
-          const errText = `⚠️ Error kirim filter *${potentialName}*:\n\`${err.message.substring(0, 100)}\``;
-          const errOpts = { parse_mode: 'Markdown', ...threadOpts(msg) };
-          if (isPrivate) {
-            await sendAutoEphemeral(bot, chatId, userId, errText, errOpts, 5);
-          } else {
-            const r = await bot.sendMessage(chatId, errText, errOpts);
-            autoDeleteMessage(bot, chatId, r.message_id, 5);
-          }
-          if (!isOwner(userId)) {
-            notifyCriticalError(bot, err.message, { chatId, userId, filterName: potentialName });
-          }
+      }
+    }
+
+    if (matchedFilter) {
+      const topicOpts = threadOpts(msg);
+      console.log(`🔍 [DEEP] → FILTER FOUND! name="${matchedName}" Sending to chatId=${chatId} topicOpts=${JSON.stringify(topicOpts)}`);
+      if (!checkRateLimit(userId)) {
+        const isPrivate = msg.chat.type === 'private';
+        if (isPrivate) {
+          await sendAutoEphemeral(bot, chatId, userId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg), 3);
+        } else {
+          const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg));
+          autoDeleteMessage(bot, chatId, r.message_id, 3);
         }
         return;
       }
+      autoDeleteMessage(bot, chatId, msg.message_id, 3);
+      try {
+        await sendFilter(bot, chatId, matchedFilter, threadOpts(msg));
+      } catch (err) {
+        console.error('❌ Filter error:', matchedName, err.message);
+        const isPrivate = msg.chat.type === 'private';
+        const errText = `⚠️ Error kirim filter *${matchedName}*:\n\`${err.message.substring(0, 100)}\``;
+        const errOpts = { parse_mode: 'Markdown', ...threadOpts(msg) };
+        if (isPrivate) {
+          await sendAutoEphemeral(bot, chatId, userId, errText, errOpts, 5);
+        } else {
+          const r = await bot.sendMessage(chatId, errText, errOpts);
+          autoDeleteMessage(bot, chatId, r.message_id, 5);
+        }
+        if (!isOwner(userId)) {
+          notifyCriticalError(bot, err.message, { chatId, userId, filterName: matchedName });
+        }
+      }
+      return;
     }
 
     // ---- AI Hoki (Group only: reply ke pesan bot) ----
     // Private chat: pakai tombol 🤖 Chat AI dari menu (pending chat_ai)
-    if (!AI_ENABLED || !msg.text) return;
-    if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') return;
-    if (!cachedBotId) return;
-    if (msg.reply_to_message?.from?.id !== cachedBotId) return;
+    console.log(`🔍 [DEEP] AI CHECK: AI_ENABLED=${AI_ENABLED} hasText=${!!msg.text} chatType=${msg.chat.type} cachedBotId=${cachedBotId} isReplyToBot=${msg.reply_to_message?.from?.id === cachedBotId}`);
+    if (!AI_ENABLED || !msg.text) {
+      console.log(`🔍 [DEEP] → AI SKIP: AI_ENABLED=${AI_ENABLED} hasText=${!!msg.text}`);
+      return;
+    }
+    if (msg.chat.type !== 'group' && msg.chat.type !== 'supergroup') {
+      console.log(`🔍 [DEEP] → AI SKIP: chatType=${msg.chat.type} (not group/supergroup)`);
+      return;
+    }
+    if (!cachedBotId) {
+      console.log(`🔍 [DEEP] → AI SKIP: cachedBotId is null`);
+      return;
+    }
+    if (msg.reply_to_message?.from?.id !== cachedBotId) {
+      console.log(`🔍 [DEEP] → AI SKIP: not a reply to bot. replyFromId=${msg.reply_to_message?.from?.id} cachedBotId=${cachedBotId}`);
+      console.log(`🔍 [DEEP] → END OF HANDLER — NO ACTION TAKEN for this message`);
+      return;
+    }
 
     const userMsg = msg.text.trim();
     if (userMsg.length < 2) return;

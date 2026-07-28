@@ -1,0 +1,54 @@
+🔍 [DEEP] captureTopic msg: updateType=message chatId=-1002015563428 chatType=supergroup isForum=true threadId=5039 msgId=5114 from=1170158500 text="/start" hasReply=true replyToMsg=5039 replyFrom=1170158500
+🔍 [DEEP] captureTopic: CAPTURED gid=-1002015563428 topicId=5039 isForum=true
+📨 [DEEP] msg received:
+  chatId=-1002015563428 userId=1170158500 chatType=supergroup
+  isForum=true threadId=5039
+  text="/start" hasReply=true
+  replyToMsg=5039 replyFromId=1170158500 isReplyToBot=false cachedBotId=1993747121
+  msgId=5114 date=1785264230 text_len=6 caption_len=0
+  newChatMembers=false serviceMsg=false
+🔍 [DEEP] → SKIP: slash command
+🔍 [DEEP] captureTopic msg: updateType=message chatId=-1002015563428 chatType=supergroup isForum=true threadId=5039 msgId=5117 from=1170158500 text="HONGKONG , 28 JUL1 2026 🌙
+R3S" hasReply=true replyToMsg=5039 replyFrom=1170158500
+🔍 [DEEP] captureTopic: CAPTURED gid=-1002015563428 topicId=5039 isForum=true
+📨 [DEEP] msg received:
+  chatId=-1002015563428 userId=1170158500 chatType=supergroup
+  isForum=true threadId=5039
+  text="" hasReply=true
+  replyToMsg=5039 replyFromId=1170158500 isReplyToBot=false cachedBotId=1993747121
+  msgId=5117 date=1785264236 text_len=0 caption_len=117
+  newChatMembers=false serviceMsg=false
+🔍 [DEEP] isAdmin(1170158500) = true
+🔍 [DEEP] FILTER TRIGGER CHECK: rawText="HONGKONG , 28 JUL1 2026 🌙
+R3SLT      : " hasPrefix=false potentialName="hongkong , 28 jul1 2026 🌙 r3slt : hk prize 1 : 6583 prize 2 : 1284 prize 3 : 8098 sh10 : m0ny3t" nameLen=96 hasSpaces=true
+🔍 [DEEP] Substring match found: "hongkong" in text
+🔍 [TRACE] threadOpts: using msg.message_thread_id=5039
+🔍 [DEEP] → FILTER FOUND! name="hongkong" Sending to chatId=-1002015563428 topicOpts={"message_thread_id":5039}
+🔍 [TRACE] threadOpts: using msg.message_thread_id=5039
+🔍 [DEEP] captureTopic msg: updateType=message chatId=-1002015563428 chatType=supergroup isForum=true threadId=5039 msgId=5119 from=1170158500 text="/start" hasReply=true replyToMsg=5039 replyFrom=1170158500
+🔍 [DEEP] captureTopic: CAPTURED gid=-1002015563428 topicId=5039 isForum=true
+📨 [DEEP] msg received:
+  chatId=-1002015563428 userId=1170158500 chatType=supergroup
+  isForum=true threadId=5039
+  text="/start" hasReply=true
+  replyToMsg=5039 replyFromId=1170158500 isReplyToBot=false cachedBotId=1993747121
+  msgId=5119 date=1785264243 text_len=6 caption_len=0
+  newChatMembers=false serviceMsg=false
+🔍 [DEEP] → SKIP: slash command
+🔍 [DEEP] captureTopic callback: chatId=-1002015563428 threadId=5039 data="filter_menu"
+🔍 [DEEP] captureTopic callback: chatId=-1002015563428 threadId=5039 data="filter_del"
+🔍 [DEEP] captureTopic msg: updateType=message chatId=-1002015563428 chatType=supergroup isForum=true threadId=5039 msgId=5122 from=1170158500 text="ai" hasReply=true replyToMsg=5039 replyFrom=1170158500
+🔍 [DEEP] captureTopic: CAPTURED gid=-1002015563428 topicId=5039 isForum=true
+📨 [DEEP] msg received:
+  chatId=-1002015563428 userId=1170158500 chatType=supergroup
+  isForum=true threadId=5039
+  text="ai" hasReply=true
+  replyToMsg=5039 replyFromId=1170158500 isReplyToBot=false cachedBotId=1993747121
+  msgId=5122 date=1785264254 text_len=2 caption_len=0
+  newChatMembers=false serviceMsg=false
+🔍 [DEEP] isAdmin(1170158500) = true
+🔍 [DEEP] → PENDING ACTION hit: user=1170158500 action=del_filter
+📋 del_filter: name="ai"
+🔍 [DEEP] captureTopic callback: chatId=-1002015563428 threadId=5039 data="fdel:ai"
+🔍 [DEEP] captureTopic callback: chatId=-1002015563428 threadId=5039 data="filter_menu"
+🔍 [DEEP] captureTopic callback: chatId=-1002015563428 threadId=5039 data="filter_list_1"
