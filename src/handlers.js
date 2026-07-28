@@ -5,8 +5,14 @@ const { OWNER_ID, AI_ENABLED, AI_MODELS, GUARD_MODEL } = require('./config');
 const {
   isAdmin, isOwner, getAdmins, checkRateLimit,
   isTimedOut, getTimeoutRemaining,
-  autoDeleteMessage, entitiesToHTML, createPagination
+  autoDeleteMessage, entitiesToHTML, createPagination,
+  sendMessageDraft, sendRichMessage, sendRichMessageDraft, sendChecklist, answerGuestQuery,
+  richParagraph, richHeading, richPreformatted, richList, richTable,
+  richDivider, richFooter, richBlockquote, richThinking, richMap,
+  richDetails, richCollage, richSlideshow, richText, sendRichMessageBlocks,
+  sendAutoEphemeral
 } = require('./utils');
+const { captureTopic, getTopicId, sendTelegramMessage } = require('./TopicTracker');
 
 // ============================================================
 // TRANSLATE HELPERS — MyMemory API, bebas key, semua user
@@ -31,12 +37,12 @@ function detectTranslateLang(text) {
 async function handleTranslate(bot, chatId, userId, msg, text) {
   const inputText = text.trim();
   if (!inputText || inputText.length < 2) {
-    const r = await bot.sendMessage(chatId, '⚠️ Teks terlalu pendek! Minimal 2 karakter ya.');
+    const r = await bot.sendMessage(chatId, '⚠️ Teks terlalu pendek! Minimal 2 karakter ya.', threadOpts(msg));
     autoDeleteMessage(bot, chatId, r.message_id, 5);
     return;
   }
   if (inputText.length > 500) {
-    const r = await bot.sendMessage(chatId, '⚠️ Maksimal 500 karakter per terjemahan!');
+    const r = await bot.sendMessage(chatId, '⚠️ Maksimal 500 karakter per terjemahan!', threadOpts(msg));
     autoDeleteMessage(bot, chatId, r.message_id, 5);
     return;
   }
@@ -57,6 +63,7 @@ async function handleTranslate(bot, chatId, userId, msg, text) {
       {
         parse_mode: 'Markdown',
         reply_to_message_id: msg?.message_id,
+        ...threadOpts(msg),
         reply_markup: {
           inline_keyboard: [[{ text: '🔄 Translate Lagi', callback_data: 'translate_menu' }]]
         }
@@ -67,7 +74,7 @@ async function handleTranslate(bot, chatId, userId, msg, text) {
     console.error('❌ Translate error:', err.message);
     const r = await bot.sendMessage(chatId,
       `❌ Gagal menerjemahkan.\n_${err.message.substring(0, 80)}_`,
-      { parse_mode: 'Markdown' }
+      { parse_mode: 'Markdown', ...threadOpts(msg) }
     );
     autoDeleteMessage(bot, chatId, r.message_id, 8);
   }
@@ -155,6 +162,7 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• ⚙️ Tools — admin tools (timeout, analytics)\n` +
     `• 🤖 Chat AI — sesi chat dengan AI Hoki\n` +
     `• 🌐 Translate — terjemahkan teks (semua user)\n` +
+    `• 🎲 Fun — dadu, poll, checklist, gallery\n` +
     `• ❓ Bantuan — panduan ini\n\n` +
     `*🎯 Filter Management (admin only):*\n` +
     `• ➕ Tambah — ketik nama → kirim konten (2 langkah)\n` +
@@ -165,11 +173,17 @@ async function sendBantuan(bot, chatId, userId, editMsgId = null) {
     `• ✏️ Rename — ketik: \`lama | baru\`\n\n` +
     `*💡 Cara trigger filter:*\n` +
     `• Tanpa spasi: ketik \`!nama\` atau \`nama\`\n` +
-    `• Dengan spasi: wajib \`!nama filter\`\n\n` +
+    `• Dengan spasi: wajib \`!nama filter\`\n` +
+    `• Inline: ketik \`@hokibot nama\` di chat lain\n\n` +
     `*🌐 Translate:*\n` +
     `• Tekan 🌐 Translate → kirim teks\n` +
     `• Auto-detect bahasa (Indonesia ↔ English)\n` +
     `• Tersedia untuk semua user\n\n` +
+    `*🎲 Fun Menu:*\n` +
+    `• 🎲 Dadu — lempar dadu emoji (6 jenis)\n` +
+    `• 📊 Poll — buat poll biasa atau quiz\n` +
+    `• ✅ Checklist — buat daftar centang\n` +
+    `• 🖼️ Gallery — lihat semua media filter sebagai album\n\n` +
     `*⏱️ Timeout user:*\n` +
     `⚙️ Tools → ⏱️ Timeout User → ketik \`ID MENIT\`\n` +
     `atau reply ke pesan user, ketik MENIT\n\n` +
@@ -204,7 +218,7 @@ async function buildFilterListText(page) {
   };
 }
 
-async function sendFilter(bot, chatId, filter) {
+async function sendFilter(bot, chatId, filter, extraOpts = {}) {
   let replyMarkup = null;
   if (filter.buttons && filter.buttons.length > 0) {
     replyMarkup = {
@@ -239,8 +253,64 @@ async function sendFilter(bot, chatId, filter) {
     }
   }
 
+  const hasMedia = filter.photo || filter.video || filter.animation || 
+                   filter.document || filter.audio || filter.voice || filter.sticker;
+  const hasText = rawText.trim().length > 0;
+
+  // Try Rich Message with Media (Bot API 10.2) — only when filter has both media + text
+  if (hasMedia && hasText) {
+    try {
+      const blocks = [];
+      
+      // Add media block
+      if (filter.photo)      blocks.push({ type: 'photo', media: filter.photo });
+      else if (filter.video)      blocks.push({ type: 'video', media: filter.video });
+      else if (filter.animation)  blocks.push({ type: 'animation', media: filter.animation });
+      else if (filter.document)   blocks.push({ type: 'document', media: filter.document });
+      else if (filter.audio)      blocks.push({ type: 'audio', media: filter.audio });
+      else if (filter.voice)      blocks.push({ type: 'voice_note', media: filter.voice });
+      else if (filter.sticker)    blocks.push({ type: 'photo', media: filter.sticker });
+      
+      // Add text as paragraph block
+      if (entities && entities.length > 0) {
+        // Convert entities to rich text segments
+        const segments = [];
+        let lastOffset = 0;
+        for (const ent of entities) {
+          if (ent.offset > lastOffset) {
+            segments.push({ type: 'text', text: rawText.substring(lastOffset, ent.offset) });
+          }
+          const entText = rawText.substring(ent.offset, ent.offset + ent.length);
+          switch (ent.type) {
+            case 'bold': segments.push({ type: 'bold', text: entText }); break;
+            case 'italic': segments.push({ type: 'italic', text: entText }); break;
+            case 'code': segments.push({ type: 'code', text: entText }); break;
+            case 'text_link': segments.push({ type: 'url', text: entText, url: ent.url }); break;
+            default: segments.push({ type: 'text', text: entText }); break;
+          }
+          lastOffset = ent.offset + ent.length;
+        }
+        if (lastOffset < rawText.length) {
+          segments.push({ type: 'text', text: rawText.substring(lastOffset) });
+        }
+        blocks.push({ type: 'paragraph', text: segments });
+      } else {
+        blocks.push({ type: 'paragraph', text: [{ type: 'text', text: rawText }] });
+      }
+      
+      await sendRichMessageBlocks(chatId, blocks, {
+        ...extraOpts,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
+      });
+      return;
+    } catch (_) {
+      // Fallback to standard methods below
+    }
+  }
+
+  // Standard fallback — media without text, text only, or rich message failed
   const captionOpts = () => {
-    const o = {};
+    const o = { ...extraOpts };
     if (formattedCaption?.trim()) {
       o.caption = formattedCaption;
       if (captionParseMode) o.parse_mode = captionParseMode;
@@ -256,17 +326,17 @@ async function sendFilter(bot, chatId, filter) {
   else if (filter.audio)     await bot.sendAudio    (chatId, filter.audio,     captionOpts());
   else if (filter.voice)     await bot.sendVoice    (chatId, filter.voice,     captionOpts());
   else if (filter.sticker) {
-    const stickerOpts = {};
+    const stickerOpts = { ...extraOpts };
     if (replyMarkup && !formattedText?.trim()) stickerOpts.reply_markup = replyMarkup;
     await bot.sendSticker(chatId, filter.sticker, stickerOpts);
     if (formattedText?.trim()) {
-      const o = {};
+      const o = { ...extraOpts };
       if (textParseMode) o.parse_mode = textParseMode;
       if (replyMarkup)   o.reply_markup = replyMarkup;
       await bot.sendMessage(chatId, formattedText, o);
     }
   } else if (formattedText?.trim()) {
-    const o = {};
+    const o = { ...extraOpts };
     if (textParseMode) o.parse_mode = textParseMode;
     if (replyMarkup)   o.reply_markup = replyMarkup;
     await bot.sendMessage(chatId, formattedText, o);
@@ -286,6 +356,18 @@ function notifyCriticalError(bot, errorMsg, context = {}) {
   ).then(() => notifStats.alertsSent++).catch(() => {});
 }
 
+function threadOpts(chatId, msg) {
+  // backward compat: threadOpts(msg)
+  if (typeof chatId === 'object' && chatId !== null) {
+    msg = chatId;
+    chatId = msg?.chat?.id;
+  }
+  if (msg?.message_thread_id) return { message_thread_id: msg.message_thread_id };
+  const tid = getTopicId(chatId);
+  if (tid) return { message_thread_id: tid };
+  return {};
+}
+
 function cancelRow(target = 'filter_menu') {
   return { inline_keyboard: [[{ text: '❌ Batal', callback_data: target }]] };
 }
@@ -294,6 +376,45 @@ function cancelRow(target = 'filter_menu') {
 // SETUP ALL HANDLERS
 // ============================================================
 function setupHandlers(bot) {
+  // TopicTracker middleware — dulu, sebelum handler lain
+  bot.use(captureTopic);
+
+  // Grammy compat layer: bot.* API methods → bot.api.*
+  const API_METHODS = ['sendMessage','sendPhoto','sendVideo','sendAnimation','sendDocument',
+    'sendAudio','sendVoice','sendSticker','sendDice','sendPoll',
+    'sendMediaGroup','sendChatAction','deleteMessage',
+    'getMe','setMyCommands','setChatMenuButton',
+    'getFile','getFileLink','sendContact','sendLocation','sendVenue'];
+  for (const m of API_METHODS) {
+    bot[m] = (...args) => bot.api[m](...args);
+  }
+  // sendMessage: auto-inject message_thread_id untuk group forum topic
+  bot.sendMessage = (chatId, text, opts) => sendTelegramMessage(bot, chatId, text, opts);
+  // editMessageText: node-telegram-bot-api (text, {chat_id, message_id, ...})
+  // → Grammy (chat_id, message_id, text, other)
+  bot.editMessageText = function(text, opts) {
+    if (typeof text === 'string' && opts?.chat_id && opts?.message_id) {
+      const { chat_id, message_id, ...rest } = opts;
+      return bot.api.editMessageText(chat_id, message_id, text, rest);
+    }
+    return bot.api.editMessageText(text, opts);
+  };
+  // answerCallbackQuery: node-telegram-bot-api (queryId, text, opts)
+  // → Grammy (queryId, {text, ...opts})
+  bot.answerCallbackQuery = function(queryId, text, opts) {
+    if (text) {
+      return bot.api.answerCallbackQuery(queryId, { text, ...opts });
+    }
+    return bot.api.answerCallbackQuery(queryId);
+  };
+  bot.answerInlineQuery = (...args) => bot.api.answerInlineQuery(...args);
+  // onText compat: like node-telegram-bot-api bot.onText(regex, handler)
+  bot.onText = (regex, handler) => {
+    bot.on('message:text', (ctx) => {
+      const match = (ctx.msg.text || '').match(regex);
+      if (match) return handler(ctx, match);
+    });
+  };
 
   // Cache bot ID satu kali saat startup
   bot.getMe().then(me => {
@@ -302,10 +423,139 @@ function setupHandlers(bot) {
   }).catch(err => console.error('❌ getMe failed:', err.message));
 
   // ==========================================================
+  // INLINE QUERY — Akses filter dari chat manapun
+  // User ketik: @hokibot nama_filter
+  // HANYA admin yang bisa akses filter via inline
+  // ==========================================================
+  bot.on('inline_query', async (ctx) => {
+    const query = ctx.inlineQuery;
+    const userId = query.from.id;
+    const queryText = query.query.trim().toLowerCase().replace(/^!/, '');
+    const offset = parseInt(query.offset) || 0;
+    const limit = 10;
+
+    // SECURITY: Hanya admin yang bisa pakai inline filter
+    if (!isAdmin(userId)) {
+      try {
+        await bot.answerInlineQuery(query.id, [], {
+          cache_time: 30,
+          switch_pm_text: '🔒 Hanya admin yang bisa pakai filter',
+          switch_pm_parameter: 'admin_only'
+        });
+      } catch (e) {}
+      return;
+    }
+
+    if (!queryText || queryText.length < 1) {
+      const names = await db.getFilterNames().catch(() => []);
+      const sliced = names.slice(offset, offset + limit);
+      const results = sliced.map((name, i) => ({
+        type: 'article',
+        id: `filter_${offset + i}`,
+        title: `!${name}`,
+        description: `Klik untuk kirim filter: ${name}`,
+        input_message_content: {
+          message_text: `!${name}`
+        }
+      }));
+      try {
+        await bot.answerInlineQuery(query.id, results, {
+          next_offset: String(offset + limit),
+          cache_time: 30,
+          switch_pm_text: names.length > offset + limit ? `${names.length - offset - limit} filter lainnya...` : 'Ketik nama filter untuk cari',
+          switch_pm_parameter: 'help'
+        });
+      } catch (e) {
+        console.error('❌ Inline query error:', e.message);
+      }
+      return;
+    }
+
+    const names = await db.getFilterNames().catch(() => []);
+    const matches = names.filter(n => n.includes(queryText)).slice(offset, offset + limit);
+    const results = matches.map((name, i) => ({
+      type: 'article',
+      id: `filter_${offset + i}`,
+      title: `!${name}`,
+      description: `Klik untuk kirim filter: ${name}`,
+      input_message_content: {
+        message_text: `!${name}`
+      }
+    }));
+
+    try {
+      await bot.answerInlineQuery(query.id, results, {
+        next_offset: String(offset + limit),
+        cache_time: 30,
+        switch_pm_text: matches.length === 0 ? 'Filter tidak ditemukan' : `${matches.length} filter ditemukan`,
+        switch_pm_parameter: 'search'
+      });
+    } catch (e) {
+      console.error('❌ Inline query error:', e.message);
+    }
+  });
+
+  // ==========================================================
+  // GUEST MESSAGE — Bot API 10.0 Guest Mode
+  // Handle pesan dari chat dimana bot tidak menjadi member
+  // ==========================================================
+  bot.on('guest_message', async (ctx) => {
+    const msg = ctx.msg;
+    const guestQueryId = msg.guest_query_id;
+    if (!guestQueryId) return;
+
+    const chatId = msg.chat.id;
+    const userId = msg.from?.id;
+    const text   = msg.text || '';
+
+    console.log(`👤 Guest message from ${userId} in chat ${chatId}: ${text.substring(0, 50)}`);
+
+    // Guest mode hanya untuk filter (non-admin juga bisa)
+    if (!text) return;
+
+    const queryText = text.trim().toLowerCase().replace(/^!/, '');
+    if (queryText.length < 2) return;
+
+    try {
+      const filter = await db.getFilter(queryText).catch(() => null);
+      if (filter) {
+        // Kirim filter sebagai response
+        let responseText = filter.text || `Filter: ${queryText}`;
+        if (responseText.length > 200) responseText = responseText.substring(0, 200) + '...';
+
+        await answerGuestQuery(guestQueryId, {
+          type: 'article',
+          id: `guest_${Date.now()}`,
+          title: `!${queryText}`,
+          description: responseText.substring(0, 100),
+          input_message_content: {
+            message_text: responseText
+          }
+        });
+        console.log(`✅ Guest filter response sent: ${queryText}`);
+      } else {
+        // Filter tidak ditemukan
+        await answerGuestQuery(guestQueryId, {
+          type: 'article',
+          id: `guest_notfound_${Date.now()}`,
+          title: '❌ Filter tidak ditemukan',
+          description: `Gunakan !namafilter untuk mencari`,
+          input_message_content: {
+            message_text: `❌ Filter "${queryText}" tidak ditemukan.\n\nKetik !namafilter untuk mencari.`
+          }
+        });
+      }
+    } catch (err) {
+      console.error('❌ Guest message error:', err.message);
+    }
+  });
+
+  // ==========================================================
   // /start — SATU-SATUNYA slash command
   // Diperlukan Telegram untuk init bot di private chat
   // ==========================================================
-  bot.onText(/\/start/, async (msg) => {
+  bot.onText(/\/start/, async (ctx) => {
+    const msg       = ctx.msg;
     const chatId    = msg.chat.id;
     const userId    = msg.from.id;
     const firstName = msg.from.first_name || 'User';
@@ -337,7 +587,8 @@ function setupHandlers(bot) {
   // CALLBACK QUERY — semua inline button
   // Dibungkus try/catch global agar error tidak crash bot
   // ==========================================================
-  bot.on('callback_query', async (query) => {
+  bot.on('callback_query', async (ctx) => {
+    const query     = ctx.callbackQuery;
     const chatId    = query.message.chat.id;
     const messageId = query.message.message_id;
     const userId    = query.from.id;
@@ -382,8 +633,11 @@ function setupHandlers(bot) {
   // ==========================================================
   // MESSAGE HANDLER — shortcut menu keyboard + pending + filter + AI
   // ==========================================================
-  bot.on('message', async (msg) => {
+  bot.on('message', async (ctx) => {
+    try {
+    const msg = ctx.msg;
     if (!msg.from) return;
+    console.log(`📨 msg received: chat=${msg.chat.id} from=${msg.from.id} text="${(msg.text||'').substring(0,40)}" reply=${!!msg.reply_to_message}`);
 
     const chatId = msg.chat.id;
     const userId = msg.from.id;
@@ -428,8 +682,13 @@ function setupHandlers(bot) {
     // Timeout check
     if (await isTimedOut(userId)) {
       const rem = await getTimeoutRemaining(userId);
-      const r   = await bot.sendMessage(chatId, `⏱️ Kamu masih timeout ${rem} detik lagi~`);
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      const isPrivate = msg.chat.type === 'private';
+      if (isPrivate) {
+        await sendAutoEphemeral(bot, chatId, userId, `⏱️ Kamu masih timeout ${rem} detik lagi~`, threadOpts(msg), 3);
+      } else {
+        const r = await bot.sendMessage(chatId, `⏱️ Kamu masih timeout ${rem} detik lagi~`, threadOpts(msg));
+        autoDeleteMessage(bot, chatId, r.message_id, 3);
+      }
       return;
     }
 
@@ -499,13 +758,24 @@ function setupHandlers(bot) {
       );
       return;
     }
+    if (text === '🎲 Fun') {
+      pendingActions.delete(userId);
+      autoDeleteMessage(bot, chatId, msg.message_id, 1);
+      await bot.sendMessage(chatId,
+        `🎲 *Fun Menu*\nPilih aktivitas seru:`,
+        { parse_mode: 'Markdown', reply_markup: kb.funMenuKeyboard() }
+      );
+      return;
+    }
 
     // ---- Pending Actions ----
     const pending = pendingActions.get(userId);
     if (pending) {
       if (pending.expiresAt && Date.now() > pending.expiresAt) {
+        console.log(`⏰ pending expired: user=${userId} action=${pending.action}`);
         pendingActions.delete(userId);
       } else {
+        console.log(`📋 pending hit: user=${userId} action=${pending.action} text="${text.substring(0, 30)}"`);
         autoDeleteMessage(bot, chatId, msg.message_id, 3);
         await handlePendingAction(bot, chatId, userId, msg, text, pending);
         return;
@@ -513,27 +783,37 @@ function setupHandlers(bot) {
     }
 
     // ---- Filter Trigger ----
-    const hasPrefix = text.startsWith('!');
-    const potentialName = (hasPrefix ? text.substring(1).trim() : text.trim()).toLowerCase().replace(/\s+/g, ' ');
+    const rawText = msg.text || msg.caption || '';
+    const hasPrefix = rawText.startsWith('!');
+    const potentialName = (hasPrefix ? rawText.substring(1).trim() : rawText.trim()).toLowerCase().replace(/\s+/g, ' ');
     // Nama tanpa spasi: bisa dipicu dengan/tanpa "!" — nama dengan spasi: WAJIB pakai "!"
     if (potentialName && potentialName.length >= 2 && (hasPrefix || !/\s/.test(potentialName))) {
       const filter = await db.getFilter(potentialName).catch(() => null);
       if (filter) {
         if (!checkRateLimit(userId)) {
-          const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.');
-          autoDeleteMessage(bot, chatId, r.message_id, 3);
+          const isPrivate = msg.chat.type === 'private';
+          if (isPrivate) {
+            await sendAutoEphemeral(bot, chatId, userId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg), 3);
+          } else {
+            const r = await bot.sendMessage(chatId, '⚠️ Terlalu banyak request! Tunggu sebentar.', threadOpts(msg));
+            autoDeleteMessage(bot, chatId, r.message_id, 3);
+          }
           return;
         }
         autoDeleteMessage(bot, chatId, msg.message_id, 3);
         try {
-          await sendFilter(bot, chatId, filter);
+          await sendFilter(bot, chatId, filter, threadOpts(msg));
         } catch (err) {
           console.error('❌ Filter error:', potentialName, err.message);
-          const r = await bot.sendMessage(chatId,
-            `⚠️ Error kirim filter *${potentialName}*:\n\`${err.message.substring(0, 100)}\``,
-            { parse_mode: 'Markdown' }
-          );
-          autoDeleteMessage(bot, chatId, r.message_id, 5);
+          const isPrivate = msg.chat.type === 'private';
+          const errText = `⚠️ Error kirim filter *${potentialName}*:\n\`${err.message.substring(0, 100)}\``;
+          const errOpts = { parse_mode: 'Markdown', ...threadOpts(msg) };
+          if (isPrivate) {
+            await sendAutoEphemeral(bot, chatId, userId, errText, errOpts, 5);
+          } else {
+            const r = await bot.sendMessage(chatId, errText, errOpts);
+            autoDeleteMessage(bot, chatId, r.message_id, 5);
+          }
           if (!isOwner(userId)) {
             notifyCriticalError(bot, err.message, { chatId, userId, filterName: potentialName });
           }
@@ -554,15 +834,37 @@ function setupHandlers(bot) {
 
     const rl = ai.checkAIRateLimit(userId);
     if (!rl.allowed) {
-      const r = await bot.sendMessage(chatId, `⏱️ Tunggu ${rl.remaining} detik lagi yaa~ 😊`);
-      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      const isPrivate = msg.chat.type === 'private';
+      const rlText = `⏱️ Tunggu ${rl.remaining} detik lagi yaa~ 😊`;
+      if (isPrivate) {
+        await sendAutoEphemeral(bot, chatId, userId, rlText, threadOpts(msg), 3);
+      } else {
+        const r = await bot.sendMessage(chatId, rlText, threadOpts(msg));
+        autoDeleteMessage(bot, chatId, r.message_id, 3);
+      }
       return;
     }
 
     try {
       await bot.sendChatAction(chatId, 'typing');
+
+      // Stream: kirim draft "thinking" sambil proses
+      const draftId = Date.now();
+      try {
+        await sendRichMessageDraft(chatId, draftId, {
+          html: '<tg-thinking>🧠 <b>Hoki sedang berpikir...</b></tg-thinking>'
+        }, threadOpts(msg));
+      } catch (_) {}
+
       const { response } = await ai.callGroqAPI(userMsg, userId);
-      await bot.sendMessage(chatId, response, { reply_to_message_id: msg.message_id });
+
+      // Kirim response final sebagai rich message
+      await sendRichMessage(chatId, {
+        markdown: response
+      }, {
+        reply_parameters: { message_id: msg.message_id },
+        ...threadOpts(msg)
+      });
     } catch (err) {
       console.error('❌ AI Error:', err.message);
       let errMsg = 'Maaf nih~ Lagi error. Coba lagi yaa 🙏';
@@ -571,15 +873,24 @@ function setupHandlers(bot) {
       } else if (err.message.includes('rate limited')) {
         errMsg = err.message;
       }
-      const r = await bot.sendMessage(chatId, errMsg, { reply_to_message_id: msg.message_id });
-      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      const isPrivate = msg.chat.type === 'private';
+      if (isPrivate) {
+        await sendAutoEphemeral(bot, chatId, userId, errMsg, { reply_to_message_id: msg.message_id, ...threadOpts(msg) }, 5);
+      } else {
+        const r = await bot.sendMessage(chatId, errMsg, { reply_to_message_id: msg.message_id, ...threadOpts(msg) });
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+      }
+    }
+    } catch (err) {
+      console.error('❌ Message handler error:', err.message);
     }
   });
 
   // ==========================================================
   // WELCOME NEW MEMBERS
   // ==========================================================
-  bot.on('new_chat_members', async (msg) => {
+  bot.on('message:new_chat_members', async (ctx) => {
+    const msg = ctx.msg;
     const chatId = msg.chat.id;
     for (const member of msg.new_chat_members) {
       if (member.is_bot) continue;
@@ -589,7 +900,7 @@ function setupHandlers(bot) {
           `🤖 Gua bot filter management.\n` +
           `${AI_ENABLED ? '💬 Chat sama gua dengan reply ke pesan gua!\n' : ''}` +
           `Enjoy! 🚀`,
-          { parse_mode: 'Markdown' }
+          { parse_mode: 'Markdown', ...threadOpts(msg) }
         );
         notifStats.welcomesSent++;
       } catch (e) {
@@ -598,33 +909,7 @@ function setupHandlers(bot) {
     }
   });
 
-  // ==========================================================
-  // POLLING ERROR — auto-recovery dengan backoff
-  // ==========================================================
-  let pollingErrCount = 0;
-  let lastErrTime     = 0;
-
-  bot.on('polling_error', (error) => {
-    const now = Date.now();
-    console.error('⚠️ Polling error:', error.code, error.message);
-    if (now - lastErrTime > 120000) pollingErrCount = 0;
-    lastErrTime = now;
-    pollingErrCount++;
-
-    const isNet = ['EFATAL', 'ETELEGRAM', 'ETIMEDOUT'].includes(error.code)
-               || error.message.includes('getUpdates');
-
-    if (pollingErrCount >= 10 && !isNet) {
-      console.error('❌ Max retries — check BOT_TOKEN');
-      process.exit(1);
-    }
-
-    const delay = Math.min(5000 * Math.min(pollingErrCount, 6), 30000);
-    console.log(`🔄 Retry ${pollingErrCount}/10 in ${delay / 1000}s...`);
-    setTimeout(() => {
-      bot.stopPolling().then(() => bot.startPolling({ restart: true })).catch(() => {});
-    }, delay);
-  });
+  // Grammy handles error recovery internally via auto-retry plugin
 }
 
 // ============================================================
@@ -656,6 +941,103 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     return;
   }
 
+  // ---- fun_menu ----
+  if (data === 'fun_menu') {
+    pendingActions.delete(userId);
+    await bot.editMessageText(
+      `🎲 *Fun Menu*\nPilih aktivitas seru:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.funMenuKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- fun_dice ----
+  if (data === 'fun_dice') {
+    await bot.editMessageText(
+      `🎲 *Pilih Dadu:*\nKlik emoji untuk lempar!`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.diceKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- dice掷 (掷 = throw, any emoji)
+  if (data.startsWith('dice🎲') || data.startsWith('dice🎯') || data.startsWith('dice🏀') ||
+      data.startsWith('dice⚽') || data.startsWith('dice🎳') || data.startsWith('dice🎰')) {
+    const emoji = data.replace('dice', '');
+    await bot.sendDice(chatId, { emoji });
+    return;
+  }
+
+  // ---- fun_poll ----
+  if (data === 'fun_poll') {
+    await bot.editMessageText(
+      `📊 *Buat Poll*\n\nPilih jenis poll:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.pollMenuKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- poll_create ----
+  if (data === 'poll_create') {
+    setPending(userId, 'poll_question');
+    await bot.editMessageText(
+      `📊 *Poll Biasa*\n\nKetik pertanyaan poll:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- poll_quiz ----
+  if (data === 'poll_quiz') {
+    setPending(userId, 'poll_quiz_question');
+    await bot.editMessageText(
+      `❓ *Quiz*\n\nKetik pertanyaan quiz:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- fun_checklist ----
+  if (data === 'fun_checklist') {
+    await bot.editMessageText(
+      `✅ *Checklist*\n\nBuat checklist interaktif.`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.checklistMenuKeyboard() }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- checklist_create ----
+  if (data === 'checklist_create') {
+    setPending(userId, 'checklist_title');
+    await bot.editMessageText(
+      `✅ *Buat Checklist*\n\nKetik judul checklist:`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    ).catch(() => {});
+    return;
+  }
+
+  // ---- fun_gallery ----
+  if (data === 'fun_gallery') {
+    if (!isAdmin(userId)) {
+      await bot.answerCallbackQuery(queryId, { text: '🔒 Hanya admin!' }).catch(() => {});
+      return;
+    }
+    setPending(userId, 'gallery_filter');
+    await bot.editMessageText(
+      `🖼️ *Gallery Mode*\n\nKetik nama filter untuk lihat sebagai gallery:\n_Semua media filter akan dikirim sebagai album._`,
+      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    ).catch(() => {});
+    return;
+  }
+
   // ---- bantuan ----
   if (data === 'bantuan') {
     await sendBantuan(bot, chatId, userId, messageId);
@@ -681,21 +1063,55 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     const stats = await db.getFilterStats();
     const mem   = process.memoryUsage();
     const up    = process.uptime();
-    await bot.editMessageText(
-      `📊 *Status Bot*\n\n` +
-      `👑 Admins: *${getAdmins().length}*\n` +
-      `🎯 Total Filter: *${stats.total}*\n` +
-      `💾 Memory: *${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB*\n` +
-      `⏱️ Uptime: *${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m*\n\n` +
-      `📦 *Breakdown Filter:*\n` +
-      `📝 Text: ${stats.text || 0}   🖼️ Photo: ${stats.photo || 0}\n` +
-      `🎥 Video: ${stats.video || 0}   📄 Doc: ${stats.document || 0}\n` +
-      `🎞️ GIF: ${stats.animation || 0}   🎵 Audio: ${stats.audio || 0}\n` +
-      `🎤 Voice: ${stats.voice || 0}   🎨 Sticker: ${stats.sticker || 0}\n` +
-      `${stats.oldest_name ? `\n📅 Filter tertua: \`${stats.oldest_name}\`` : ''}`,
-      { chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-        reply_markup: kb.backKeyboard('main_menu') }
-    ).catch(() => {});
+    const blocks = [];
+    blocks.push(richHeading('📊 Status Bot'));
+    blocks.push(richParagraph([
+      richText('text', `👑 Admins: ${getAdmins().length}`)
+    ]));
+    blocks.push(richTable(
+      ['Metric', 'Value'],
+      [
+        ['🎯 Total Filter', String(stats.total)],
+        ['💾 Memory', `${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB`],
+        ['⏱️ Uptime', `${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m`]
+      ]
+    ));
+    blocks.push(richHeading('📦 Breakdown Filter', 3));
+    blocks.push(richTable(
+      ['Type', 'Count'],
+      [
+        ['📝 Text', String(stats.text || 0)],
+        ['🖼️ Photo', String(stats.photo || 0)],
+        ['🎥 Video', String(stats.video || 0)],
+        ['📄 Document', String(stats.document || 0)],
+        ['🎞️ Animation', String(stats.animation || 0)],
+        ['🎵 Audio', String(stats.audio || 0)],
+        ['🎤 Voice', String(stats.voice || 0)],
+        ['🎨 Sticker', String(stats.sticker || 0)]
+      ]
+    ));
+    if (stats.oldest_name) {
+      blocks.push(richParagraph([richText('text', `📅 Filter tertua: ${stats.oldest_name}`)]));
+    }
+    
+    try {
+      await bot.editMessageText('', {
+        chat_id: chatId, message_id: messageId,
+        rich_message: { blocks },
+        reply_markup: kb.backKeyboard('main_menu')
+      });
+    } catch (_) {
+      const fallbackText =
+        `📊 *Status Bot*\n\n` +
+        `👑 Admins: *${getAdmins().length}*\n` +
+        `🎯 Total Filter: *${stats.total}*\n` +
+        `💾 Memory: *${(mem.heapUsed / 1024 / 1024).toFixed(2)} MB*\n` +
+        `⏱️ Uptime: *${Math.floor(up / 3600)}h ${Math.floor((up % 3600) / 60)}m*`;
+      await bot.editMessageText(fallbackText, {
+        chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
+        reply_markup: kb.backKeyboard('main_menu')
+      }).catch(() => {});
+    }
     return;
   }
 
@@ -907,12 +1323,38 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
 
   if (data.startsWith('filter_list_')) {
     const page = parseInt(data.split('_')[2]) || 1;
-    const { text, total, page: p } = await buildFilterListText(page);
+    const { items, total, page: p } = await db.getFilterNames().then(names => {
+      if (names.length === 0) return { items: [], total: 0, page: 1 };
+      const pag = createPagination(names, page, 15);
+      return { items: pag.items, total: pag.total, page: pag.page };
+    });
+    
+    const blocks = [];
+    blocks.push(richHeading(`🎯 Daftar Filter (${items.length > 0 ? (p - 1) * 15 + items.length : 0} total) — Halaman ${p}/${total}`));
+    
+    if (items.length > 0) {
+      const listItems = items.map((n, i) => `${(p - 1) * 15 + i + 1}. !${n}`);
+      blocks.push(richList(listItems));
+    } else {
+      blocks.push(richParagraph([richText('text', '📭 Belum ada filter.')]));
+    }
+    
     const keyboard = total > 0 ? kb.filterListKeyboard(p, total) : kb.backKeyboard('filter_menu');
-    await bot.editMessageText(text, {
-      chat_id: chatId, message_id: messageId, parse_mode: 'Markdown',
-      reply_markup: keyboard
-    }).catch(() => {});
+    try {
+      await bot.editMessageText('', {
+        chat_id: chatId, message_id: messageId,
+        rich_message: { blocks },
+        reply_markup: keyboard
+      });
+    } catch (_) {
+      const fallbackText = items.length > 0
+        ? items.map((n, i) => `${(p - 1) * 15 + i + 1}. \`!${n}\``).join('\n')
+        : '📭 Belum ada filter.';
+      await bot.editMessageText(fallbackText, {
+        chat_id: chatId, message_id: messageId,
+        reply_markup: keyboard
+      }).catch(() => {});
+    }
     return;
   }
 
@@ -1048,6 +1490,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
   // ---- del_filter ----
   if (action === 'del_filter') {
     const filterName = text.replace(/^!/, '').trim().toLowerCase().replace(/\s+/g, ' ');
+    console.log(`📋 del_filter: name="${filterName}"`);
     if (!filterName) {
       const r = await bot.sendMessage(chatId, '⚠️ Ketik nama filter yang mau dihapus!', { reply_markup: cancelRow() });
       autoDeleteMessage(bot, chatId, r.message_id, 5);
@@ -1240,7 +1683,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
   // ---- chat_ai ----
   if (action === 'chat_ai') {
     if (!AI_ENABLED) {
-      const r = await bot.sendMessage(chatId, '⚠️ AI Hoki belum aktif. Set GROQ_API_KEY dulu ya!');
+      const r = await bot.sendMessage(chatId, '⚠️ AI Hoki belum aktif. Set GROQ_API_KEY dulu ya!', threadOpts(msg));
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       pendingActions.delete(userId);
       return;
@@ -1250,15 +1693,31 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
 
     const rl = ai.checkAIRateLimit(userId);
     if (!rl.allowed) {
-      const r = await bot.sendMessage(chatId, `⏱️ Tunggu ${rl.remaining} detik lagi yaa~ 😊`);
+      const r = await bot.sendMessage(chatId, `⏱️ Tunggu ${rl.remaining} detik lagi yaa~ 😊`, threadOpts(msg));
       autoDeleteMessage(bot, chatId, r.message_id, 3);
       return;
     }
     // Jangan hapus pending — sesi AI tetap aktif sampai user tekan tombol lain
     try {
       await bot.sendChatAction(chatId, 'typing');
+
+      // Stream: kirim draft "thinking" sambil proses
+      const draftId = Date.now();
+      try {
+        await sendRichMessageDraft(chatId, draftId, {
+          html: '<tg-thinking>🧠 <b>Hoki sedang berpikir...</b></tg-thinking>'
+        }, threadOpts(msg));
+      } catch (_) {}
+
       const { response } = await ai.callGroqAPI(userMsg, userId);
-      await bot.sendMessage(chatId, response, { reply_to_message_id: msg.message_id });
+
+      // Kirim response final sebagai rich message
+      await sendRichMessage(chatId, {
+        markdown: response
+      }, {
+        reply_parameters: { message_id: msg.message_id },
+        ...threadOpts(msg)
+      });
     } catch (err) {
       console.error('❌ AI Error (pending):', err.message);
       let errMsg = 'Maaf nih~ Lagi error. Coba lagi yaa 🙏';
@@ -1267,8 +1726,13 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       } else if (err.message.includes('rate limited')) {
         errMsg = err.message;
       }
-      const r = await bot.sendMessage(chatId, errMsg, { reply_to_message_id: msg.message_id });
-      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      const isPrivate = msg.chat.type === 'private';
+      if (isPrivate) {
+        await sendAutoEphemeral(bot, chatId, userId, errMsg, { reply_to_message_id: msg.message_id, ...threadOpts(msg) }, 5);
+      } else {
+        const r = await bot.sendMessage(chatId, errMsg, { reply_to_message_id: msg.message_id, ...threadOpts(msg) });
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+      }
     }
     return;
   }
@@ -1276,6 +1740,204 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
   // ---- translate (via pending) ----
   if (action === 'translate') {
     await handleTranslate(bot, chatId, userId, msg, text);
+    return;
+  }
+
+  // ---- poll_question ----
+  if (action === 'poll_question') {
+    if (!text || text.length < 2) {
+      const r = await bot.sendMessage(chatId, '⚠️ Pertanyaan minimal 2 karakter!', { reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    setPending(userId, 'poll_options', { question: text, options: [] });
+    await bot.sendMessage(chatId,
+      `📝 *Pertanyaan:* ${text}\n\nKetik opsi jawaban (1 per baris, minimal 2):\n_Ketik \`selesai\` untuk kirim poll._`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- poll_options ----
+  if (action === 'poll_options') {
+    const p = pending.data;
+    if (text.toLowerCase() === 'selesai') {
+      if (p.options.length < 2) {
+        const r = await bot.sendMessage(chatId, '⚠️ Minimal 2 opsi!', { reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } });
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+        return;
+      }
+      pendingActions.delete(userId);
+      await bot.sendPoll(chatId, p.question, p.options, {
+        is_anonymous: true,
+        allows_multiple_answers: false
+      });
+      const r = await bot.sendMessage(chatId, `✅ Poll berhasil dikirim!`);
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
+    if (p.options.length >= 10) {
+      const r = await bot.sendMessage(chatId, '⚠️ Maksimal 10 opsi!');
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
+    p.options.push(text);
+    await bot.sendMessage(chatId,
+      `✅ Opsi ${p.options.length}: ${text}\n\nKetik opsi berikut atau \`selesai\``,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- poll_quiz_question ----
+  if (action === 'poll_quiz_question') {
+    if (!text || text.length < 2) {
+      const r = await bot.sendMessage(chatId, '⚠️ Pertanyaan minimal 2 karakter!', { reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    setPending(userId, 'poll_quiz_options', { question: text, options: [] });
+    await bot.sendMessage(chatId,
+      `📝 *Quiz:* ${text}\n\nKetik opsi jawaban (1 per baris, minimal 2):\n_Ketik \`selesai\` lalu ketik nomor jawaban benar._`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- poll_quiz_options ----
+  if (action === 'poll_quiz_options') {
+    const p = pending.data;
+    if (text.toLowerCase() === 'selesai') {
+      if (p.options.length < 2) {
+        const r = await bot.sendMessage(chatId, '⚠️ Minimal 2 opsi!');
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+        return;
+      }
+      setPending(userId, 'poll_quiz_answer', p);
+      const optList = p.options.map((o, i) => `${i + 1}. ${o}`).join('\n');
+      await bot.sendMessage(chatId,
+        `${optList}\n\nKetik nomor jawaban benar (contoh: \`1\`):`,
+        { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+      );
+      return;
+    }
+    if (p.options.length >= 10) {
+      const r = await bot.sendMessage(chatId, '⚠️ Maksimal 10 opsi!');
+      autoDeleteMessage(bot, chatId, r.message_id, 3);
+      return;
+    }
+    p.options.push(text);
+    await bot.sendMessage(chatId,
+      `✅ Opsi ${p.options.length}: ${text}\n\nKetik opsi berikut atau \`selesai\``,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- poll_quiz_answer ----
+  if (action === 'poll_quiz_answer') {
+    const p = pending.data;
+    const correctIdx = parseInt(text) - 1;
+    if (isNaN(correctIdx) || correctIdx < 0 || correctIdx >= p.options.length) {
+      const r = await bot.sendMessage(chatId, `⚠️ Nomor tidak valid! Pilih 1-${p.options.length}`);
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    pendingActions.delete(userId);
+    await bot.sendPoll(chatId, p.question, p.options, {
+      is_anonymous: true,
+      type: 'quiz',
+      correct_option_id: correctIdx
+    });
+    const r = await bot.sendMessage(chatId, `✅ Quiz berhasil dikirim!`);
+    autoDeleteMessage(bot, chatId, r.message_id, 3);
+    return;
+  }
+
+  // ---- checklist_title ----
+  if (action === 'checklist_title') {
+    if (!text || text.length < 2) {
+      const r = await bot.sendMessage(chatId, '⚠️ Judul minimal 2 karakter!', { reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    setPending(userId, 'checklist_items', { title: text, items: [] });
+    await bot.sendMessage(chatId,
+      `✅ *Judul:* ${text}\n\nKetik item checklist (1 per baris):\n_Ketik \`selesai\` untuk kirim checklist._`,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- checklist_items ----
+  if (action === 'checklist_items') {
+    const p = pending.data;
+    if (text.toLowerCase() === 'selesai') {
+      if (p.items.length === 0) {
+        const r = await bot.sendMessage(chatId, '⚠️ Minimal 1 item!');
+        autoDeleteMessage(bot, chatId, r.message_id, 5);
+        return;
+      }
+      pendingActions.delete(userId);
+      const caption = `✅ *${p.title}*\n\n${p.items.map((item, i) => `☐ ${item}`).join('\n')}`;
+      const r = await bot.sendMessage(chatId, caption, {
+        parse_mode: 'Markdown',
+        reply_markup: { inline_keyboard: [[{ text: '🔙 Kembali', callback_data: 'fun_menu' }]] }
+      });
+      autoDeleteMessage(bot, chatId, r.message_id, 60);
+      return;
+    }
+    p.items.push(text);
+    await bot.sendMessage(chatId,
+      `✅ Item ${p.items.length}: ${text}\n\nKetik item berikut atau \`selesai\``,
+      { parse_mode: 'Markdown', reply_markup: { inline_keyboard: [[{ text: '❌ Batal', callback_data: 'fun_menu' }]] } }
+    );
+    return;
+  }
+
+  // ---- gallery_filter ----
+  if (action === 'gallery_filter') {
+    // SECURITY: Hanya admin
+    if (!isAdmin(userId)) {
+      pendingActions.delete(userId);
+      const r = await bot.sendMessage(chatId, '🔒 Hanya admin yang bisa akses filter!');
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    const filterName = text.replace(/^!/, '').trim().toLowerCase().replace(/\s+/g, ' ');
+    pendingActions.delete(userId);
+    if (!filterName) {
+      const r = await bot.sendMessage(chatId, '⚠️ Ketik nama filter!');
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    const filter = await db.getFilter(filterName).catch(() => null);
+    if (!filter) {
+      const r = await bot.sendMessage(chatId, `⚠️ Filter *${filterName}* tidak ditemukan!`, { parse_mode: 'Markdown' });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    const media = [];
+    if (filter.photo)      media.push({ type: 'photo',  media: filter.photo });
+    if (filter.video)      media.push({ type: 'video',  media: filter.video });
+    if (filter.animation)  media.push({ type: 'photo',  media: filter.animation });
+    if (filter.document)   media.push({ type: 'document', media: filter.document });
+    if (filter.audio)      media.push({ type: 'audio',  media: filter.audio });
+    if (filter.sticker)    media.push({ type: 'photo',  media: filter.sticker });
+
+    if (media.length === 0) {
+      const r = await bot.sendMessage(chatId, `📭 Filter *${filterName}* hanya berisi teks, tidak ada media untuk gallery.`, { parse_mode: 'Markdown' });
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+      return;
+    }
+    try {
+      await bot.sendMediaGroup(chatId, media.slice(0, 10));
+      const r = await bot.sendMessage(chatId, `🖼️ *Gallery: ${filterName}*`, { parse_mode: 'Markdown' });
+      autoDeleteMessage(bot, chatId, r.message_id, 10);
+    } catch (err) {
+      const r = await bot.sendMessage(chatId, `❌ Error: ${err.message.substring(0, 100)}`);
+      autoDeleteMessage(bot, chatId, r.message_id, 5);
+    }
     return;
   }
 

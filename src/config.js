@@ -76,5 +76,6 @@ module.exports = {
   AI_COOLDOWN_MS: 3000,
   MAX_CONVERSATION_LENGTH: 10,
   AI_MODELS,
-  GUARD_MODEL
+  GUARD_MODEL,
+  TELEGRAM_TOPIC_GROUPS: (process.env.TELEGRAM_TOPIC_GROUPS || '').split(',').map(s => s.trim()).filter(Boolean)
 };

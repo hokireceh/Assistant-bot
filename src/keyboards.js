@@ -21,6 +21,7 @@ function adminMenuKeyboard() {
         { text: '🌐 Translate' }
       ],
       [
+        { text: '🎲 Fun' },
         { text: '❓ Bantuan' }
       ]
     ],
@@ -192,6 +193,128 @@ function confirmDeleteKeyboard(filterName) {
   };
 }
 
+// ============================================================
+// FUN MENU (inline) — Dice, Poll, Checklist, Rich Message
+// ============================================================
+function funMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🎲 Dadu',      callback_data: 'fun_dice' },
+        { text: '📊 Poll',      callback_data: 'fun_poll' }
+      ],
+      [
+        { text: '✅ Checklist', callback_data: 'fun_checklist' },
+        { text: '🖼️ Gallery',   callback_data: 'fun_gallery' }
+      ],
+      [
+        { text: '✨ Rich Message', callback_data: 'rich_demo_menu' }
+      ],
+      [
+        { text: '🔙 Kembali',   callback_data: 'main_menu' }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// RICH MESSAGE DEMO MENU (inline)
+// ============================================================
+function richMessageDemoKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '📝 Text Formatting', callback_data: 'rich_demo_text' },
+        { text: '📊 Tables',          callback_data: 'rich_demo_table' }
+      ],
+      [
+        { text: '📋 Lists',           callback_data: 'rich_demo_list' },
+        { text: '🖼️ Media Blocks',    callback_data: 'rich_demo_media' }
+      ],
+      [
+        { text: '🧠 AI Thinking',     callback_data: 'rich_demo_thinking' },
+        { text: '🗺️ Map & More',      callback_data: 'rich_demo_advanced' }
+      ],
+      [
+        { text: '🔙 Kembali',         callback_data: 'fun_menu' }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// DICE MENU (inline) — Pilih jenis dadu
+// ============================================================
+function diceKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🎲', callback_data: 'dice🎲' },
+        { text: '🎯', callback_data: 'dice🎯' },
+        { text: '🏀', callback_data: 'dice🏀' }
+      ],
+      [
+        { text: '⚽', callback_data: 'dice⚽' },
+        { text: '🎳', callback_data: 'dice🎳' },
+        { text: '🎰', callback_data: 'dice🎰' }
+      ],
+      [
+        { text: '🔙 Kembali', callback_data: 'fun_menu' }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// POLL MENU (inline) — Buat poll
+// ============================================================
+function pollMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '📊 Poll Biasa',    callback_data: 'poll_create' },
+        { text: '❓ Quiz',           callback_data: 'poll_quiz' }
+      ],
+      [
+        { text: '🔙 Kembali',       callback_data: 'fun_menu' }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// CHECKLIST MENU (inline)
+// ============================================================
+function checklistMenuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: '✅ Buat Checklist', callback_data: 'checklist_create' }
+      ],
+      [
+        { text: '🔙 Kembali',        callback_data: 'fun_menu' }
+      ]
+    ]
+  };
+}
+
+// ============================================================
+// FILTER GALLERY PREVIEW (inline)
+// ============================================================
+function filterGalleryKeyboard(filterName) {
+  return {
+    inline_keyboard: [
+      [
+        { text: '🗑️ Hapus', callback_data: `fdel:${filterName}` },
+        { text: '📋 Clone',  callback_data: 'filter_clone' }
+      ],
+      [
+        { text: '🔙 Kembali', callback_data: 'filter_menu' }
+      ]
+    ]
+  };
+}
+
 module.exports = {
   adminMenuKeyboard,
   mainMenuKeyboard,
@@ -202,5 +325,11 @@ module.exports = {
   filterMenuKeyboard,
   filterListKeyboard,
   backKeyboard,
-  confirmDeleteKeyboard
+  confirmDeleteKeyboard,
+  funMenuKeyboard,
+  richMessageDemoKeyboard,
+  diceKeyboard,
+  pollMenuKeyboard,
+  checklistMenuKeyboard,
+  filterGalleryKeyboard
 };
