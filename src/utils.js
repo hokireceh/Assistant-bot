@@ -272,6 +272,42 @@ async function answerGuestQuery(guestQueryId, result) {
 }
 
 // ============================================================
+// ENTITIES → RICH TEXT SEGMENTS
+// Convert Telegram MessageEntity array → rich text segment array
+// ============================================================
+function entitiesToRichSegments(text, entities) {
+  if (!entities || entities.length === 0) {
+    return [{ type: 'text', text }];
+  }
+  const sorted = [...entities].sort((a, b) => a.offset - b.offset);
+  const segments = [];
+  let last = 0;
+  for (const ent of sorted) {
+    if (ent.offset > last) {
+      segments.push({ type: 'text', text: text.substring(last, ent.offset) });
+    }
+    const t = text.substring(ent.offset, ent.offset + ent.length);
+    switch (ent.type) {
+      case 'bold':         segments.push({ type: 'bold',   text: t }); break;
+      case 'italic':       segments.push({ type: 'italic', text: t }); break;
+      case 'code':         segments.push({ type: 'code',   text: t }); break;
+      case 'pre':          segments.push({ type: 'code',   text: t }); break;
+      case 'underline':    segments.push({ type: 'text',   text: t }); break;
+      case 'strikethrough':segments.push({ type: 'text',   text: t }); break;
+      case 'spoiler':      segments.push({ type: 'text',   text: t }); break;
+      case 'text_link':    segments.push({ type: 'url',    text: t, url: ent.url }); break;
+      case 'text_mention': segments.push({ type: 'url',    text: t, url: `tg://user?id=${ent.user?.id}` }); break;
+      default:             segments.push({ type: 'text',   text: t }); break;
+    }
+    last = ent.offset + ent.length;
+  }
+  if (last < text.length) {
+    segments.push({ type: 'text', text: text.substring(last) });
+  }
+  return segments;
+}
+
+// ============================================================
 // RICH MESSAGE BLOCK BUILDERS
 // Helper untuk membuat structured rich message blocks
 // ============================================================
@@ -369,6 +405,7 @@ module.exports = {
   telegramAPI, sendMessageDraft, sendRichMessage, sendRichMessageDraft, sendChecklist,
   answerGuestQuery,
   sendEphemeral, sendEphemeralRich, sendAutoEphemeral,
+  entitiesToRichSegments,
   richBlock, richText, richParagraph, richHeading, richPreformatted,
   richList, richTable, richDivider, richFooter, richBlockquote,
   richCollage, richSlideshow, richDetails, richThinking, richMap,

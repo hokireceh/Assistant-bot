@@ -10,7 +10,7 @@ const {
   richParagraph, richHeading, richPreformatted, richList, richTable,
   richDivider, richFooter, richBlockquote, richThinking, richMap,
   richDetails, richCollage, richSlideshow, richText, sendRichMessageBlocks,
-  sendAutoEphemeral
+  entitiesToRichSegments, sendAutoEphemeral
 } = require('./utils');
 const { captureTopic, getTopicId, sendTelegramMessage } = require('./TopicTracker');
 
@@ -235,17 +235,52 @@ async function sendFilter(bot, chatId, filter, extraOpts = {}) {
   const entities         = filter.entities;
   const caption_entities = filter.caption_entities;
   const rawText          = filter.text || '';
+  const hasText          = rawText.trim().length > 0;
 
-  let formattedText  = rawText;
-  let textParseMode  = null;
-  if (entities && entities.length > 0) {
-    formattedText = entitiesToHTML(rawText, entities);
-    textParseMode = 'HTML';
+  const hasMedia  = filter.photo || filter.video || filter.animation ||
+                    filter.document || filter.audio || filter.voice;
+  const hasSticker = !!filter.sticker;
+  const hasAny    = hasMedia || hasSticker;
+
+  // ============================================================
+  // RICH MESSAGE — Bot API 10.2: single request for all filter types
+  // ============================================================
+  if (hasAny || hasText) {
+    try {
+      const blocks = [];
+
+      // Media block
+      if (hasSticker)      blocks.push({ type: 'photo', media: filter.sticker });
+      else if (filter.photo)      blocks.push({ type: 'photo', media: filter.photo });
+      else if (filter.video)      blocks.push({ type: 'video', media: filter.video });
+      else if (filter.animation)  blocks.push({ type: 'animation', media: filter.animation });
+      else if (filter.document)   blocks.push({ type: 'document', media: filter.document });
+      else if (filter.audio)      blocks.push({ type: 'audio', media: filter.audio });
+      else if (filter.voice)      blocks.push({ type: 'voice_note', media: filter.voice });
+
+      // Text paragraph block (caption or standalone text)
+      if (hasText) {
+        const ent = (hasMedia && caption_entities?.length) ? caption_entities : entities;
+        const segments = entitiesToRichSegments(rawText, ent);
+        blocks.push({ type: 'paragraph', text: segments });
+      }
+
+      await sendRichMessageBlocks(chatId, blocks, {
+        ...extraOpts,
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
+      });
+      return;
+    } catch (_) {
+      // Rich message failed — fall through to standard methods
+    }
   }
 
+  // ============================================================
+  // STANDARD FALLBACK — when Rich Message unavailable or failed
+  // ============================================================
   let formattedCaption = rawText;
   let captionParseMode = null;
-  if (rawText.trim().length > 0) {
+  if (hasText) {
     const ent = caption_entities?.length ? caption_entities : entities;
     if (ent && ent.length > 0) {
       formattedCaption = entitiesToHTML(rawText, ent);
@@ -253,62 +288,13 @@ async function sendFilter(bot, chatId, filter, extraOpts = {}) {
     }
   }
 
-  const hasMedia = filter.photo || filter.video || filter.animation || 
-                   filter.document || filter.audio || filter.voice || filter.sticker;
-  const hasText = rawText.trim().length > 0;
-
-  // Try Rich Message with Media (Bot API 10.2) — only when filter has both media + text
-  if (hasMedia && hasText) {
-    try {
-      const blocks = [];
-      
-      // Add media block
-      if (filter.photo)      blocks.push({ type: 'photo', media: filter.photo });
-      else if (filter.video)      blocks.push({ type: 'video', media: filter.video });
-      else if (filter.animation)  blocks.push({ type: 'animation', media: filter.animation });
-      else if (filter.document)   blocks.push({ type: 'document', media: filter.document });
-      else if (filter.audio)      blocks.push({ type: 'audio', media: filter.audio });
-      else if (filter.voice)      blocks.push({ type: 'voice_note', media: filter.voice });
-      else if (filter.sticker)    blocks.push({ type: 'photo', media: filter.sticker });
-      
-      // Add text as paragraph block
-      if (entities && entities.length > 0) {
-        // Convert entities to rich text segments
-        const segments = [];
-        let lastOffset = 0;
-        for (const ent of entities) {
-          if (ent.offset > lastOffset) {
-            segments.push({ type: 'text', text: rawText.substring(lastOffset, ent.offset) });
-          }
-          const entText = rawText.substring(ent.offset, ent.offset + ent.length);
-          switch (ent.type) {
-            case 'bold': segments.push({ type: 'bold', text: entText }); break;
-            case 'italic': segments.push({ type: 'italic', text: entText }); break;
-            case 'code': segments.push({ type: 'code', text: entText }); break;
-            case 'text_link': segments.push({ type: 'url', text: entText, url: ent.url }); break;
-            default: segments.push({ type: 'text', text: entText }); break;
-          }
-          lastOffset = ent.offset + ent.length;
-        }
-        if (lastOffset < rawText.length) {
-          segments.push({ type: 'text', text: rawText.substring(lastOffset) });
-        }
-        blocks.push({ type: 'paragraph', text: segments });
-      } else {
-        blocks.push({ type: 'paragraph', text: [{ type: 'text', text: rawText }] });
-      }
-      
-      await sendRichMessageBlocks(chatId, blocks, {
-        ...extraOpts,
-        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
-      });
-      return;
-    } catch (_) {
-      // Fallback to standard methods below
-    }
+  let formattedText = rawText;
+  let textParseMode = null;
+  if (entities && entities.length > 0) {
+    formattedText = entitiesToHTML(rawText, entities);
+    textParseMode = 'HTML';
   }
 
-  // Standard fallback — media without text, text only, or rich message failed
   const captionOpts = () => {
     const o = { ...extraOpts };
     if (formattedCaption?.trim()) {
@@ -824,20 +810,19 @@ function setupHandlers(bot) {
     let matchedFilter = null;
     let matchedName = null;
 
-    // 1) Exact match (tanpa spasi / dengan prefix !)
-    if (potentialName && potentialName.length >= 2 && (hasPrefix || !/\s/.test(potentialName))) {
+    // 1) Exact match (without prefix !)
+    if (potentialName && potentialName.length >= 2 && !/\s/.test(potentialName)) {
       matchedFilter = await db.getFilter(potentialName).catch(() => null);
       if (matchedFilter) matchedName = potentialName;
       console.log(`🔍 [DEEP] Exact match getFilter("${potentialName}") = ${matchedFilter ? 'FOUND' : 'NOT_FOUND'}`);
     }
 
-    // 2) Substring match — cari nama filter di dalam teks/caption
+    // 2) Substring match — find filter name as word anywhere in message
     if (!matchedFilter && rawText.trim().length >= 2) {
       const filterNames = await db.getFilterNames().catch(() => []);
       const lowerText = rawText.toLowerCase();
       for (const name of filterNames) {
         const lowerName = name.toLowerCase();
-        // Cari nama filter sebagai kata utuh (word boundary)
         const regex = new RegExp(`(?:^|[\\s!])${lowerName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:[\\s,.:;!?\n]|$)`, 'i');
         if (regex.test(lowerText)) {
           matchedFilter = await db.getFilter(name).catch(() => null);
