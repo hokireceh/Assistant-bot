@@ -211,7 +211,7 @@ async function buildFilterListText(page) {
   }
   const { items, total, page: p } = createPagination(names, page, 15);
   const start    = (p - 1) * 15;
-  const listText = items.map((n, i) => `${start + i + 1}. \`!${n}\``).join('\n');
+  const listText = items.map((n, i) => `${start + i + 1}. ${n}`).join('\n');
   return {
     text: `🎯 *Daftar Filter (${names.length} total) — Halaman ${p}/${total}:*\n\n${listText}`,
     total, page: p
@@ -1394,7 +1394,7 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
     blocks.push(richHeading(`🎯 Daftar Filter (${items.length > 0 ? (p - 1) * 15 + items.length : 0} total) — Halaman ${p}/${total}`));
     
     if (items.length > 0) {
-      const listItems = items.map((n, i) => `${(p - 1) * 15 + i + 1}. !${n}`);
+      const listItems = items.map((n, i) => `${(p - 1) * 15 + i + 1}. ${n}`);
       blocks.push(richList(listItems));
     } else {
       blocks.push(richParagraph([richText('text', '📭 Belum ada filter.')]));
@@ -1409,7 +1409,7 @@ async function handleCallback(bot, chatId, messageId, userId, queryId, data) {
       });
     } catch (_) {
       const fallbackText = items.length > 0
-        ? items.map((n, i) => `${(p - 1) * 15 + i + 1}. \`!${n}\``).join('\n')
+        ? items.map((n, i) => `${(p - 1) * 15 + i + 1}. ${n}`).join('\n')
         : '📭 Belum ada filter.';
       await bot.editMessageText(fallbackText, {
         chat_id: chatId, message_id: messageId,
@@ -1596,7 +1596,7 @@ async function handlePendingAction(bot, chatId, userId, msg, text, pending) {
       autoDeleteMessage(bot, chatId, r.message_id, 5);
       return;
     }
-    const listText = results.map((n, i) => `${i + 1}. \`!${n}\``).join('\n');
+    const listText = results.map((n, i) => `${i + 1}. ${n}`).join('\n');
     const r = await bot.sendMessage(chatId,
       `🔍 *Hasil "${term}" (${results.length} filter):*\n\n${listText}`,
       { parse_mode: 'Markdown', reply_markup: kb.backKeyboard('filter_menu') }
