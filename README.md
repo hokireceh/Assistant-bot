@@ -1,6 +1,4 @@
 
-
-
 # 🤖 Telegram Bot - Admin & Filter Management
 
 Bot Telegram untuk manajemen admin dan filter dengan fitur lengkap, AI assistant 3-tier cascade system, dan performa optimal.
@@ -23,6 +21,13 @@ Bot Telegram untuk manajemen admin dan filter dengan fitur lengkap, AI assistant
 - 🔍 Search filter dengan keyword
 - 💾 Export/backup semua filter (Owner only)
 - 📊 Info detail setiap filter
+- 🚀 **Bot API 10.2 Rich Message** - Pesan rich formatted dengan satu API call
+- 🎯 **Auto-trigger tanpa prefix** - Ketik nama filter langsung tanpa `!`
+
+### 🏗️ Forum Topic Support
+- 📌 Auto-detect forum topic ID dari pesan
+- 💬 Response otomatis kirim ke topic yang benar
+- 🔧 TopicTracker middleware untuk tracking topic secara real-time
 
 ### 🚀 Optimasi & Keamanan
 - ⚡ Rate limiting untuk mencegah spam (5 req/sec per user)
@@ -44,7 +49,7 @@ Bot Telegram untuk manajemen admin dan filter dengan fitur lengkap, AI assistant
 - Quality: 10/10
 
 **Tier 2 - General (UNLIMITED Tokens!):**
-- Model: `groq/compound-mini` ⚡ **NEW**
+- Model: `groq/compound-mini`
 - Capacity: 250 req/day, **UNLIMITED** tokens/day, 70K tokens/min
 - Use case: 85% traffic, super fast responses (~150ms)
 - Quality: 8/10
@@ -56,7 +61,7 @@ Bot Telegram untuk manajemen admin dan filter dengan fitur lengkap, AI assistant
 - Quality: 7/10
 
 **🛡️ Content Moderation:**
-- Model: `meta-llama/llama-guard-4-12b` (Upgraded!)
+- Model: `meta-llama/llama-guard-4-12b`
 - Advanced content filtering & safety
 
 **✨ AI Features:**
@@ -116,13 +121,32 @@ OWNER_ID=your_telegram_user_id_here
 # Daftar admin IDs (comma-separated)
 ADMIN_IDS=1170158500,123456789,987654321
 
+# PostgreSQL database (Neon cloud recommended)
+DATABASE_URL=postgresql://user:pass@host/dbname?sslmode=require
+
 # OPTIONAL: API key untuk AI Hoki (get from https://console.groq.com)
 GROQ_API_KEY=your_groq_api_key_here
+
+# OPTIONAL: Group IDs untuk forum topic tracking
+TELEGRAM_TOPIC_GROUPS=-1001234567890
 ```
 
-### 4. Jalankan Bot
+### 4. Setup Database
+```bash
+# Jalankan schema ke PostgreSQL
+psql $DATABASE_URL -f schema.sql
+```
+
+### 5. Jalankan Bot
 ```bash
 npm start
+```
+
+### 6. Jalankan dengan PM2 (Recommended)
+```bash
+pm2 start index.js --name assistant-bot
+pm2 save
+pm2 startup
 ```
 
 ## 📖 Cara Penggunaan
@@ -169,14 +193,17 @@ npm start
 - `/help` - Lihat semua command yang tersedia
 
 ### Menggunakan Filter
+
 Admin bisa menggunakan filter dengan:
-```
-!namafilter
-```
-atau
 ```
 namafilter
 ```
+atau
+```
+!namafilter
+```
+
+**Auto-trigger:** Ketik nama filter langsung (tanpa `!`) dan bot akan merespon. Bisa juga dengan prefix `!` untuk eksplisit.
 
 ## 🎨 Contoh Penggunaan
 
@@ -194,6 +221,11 @@ namafilter
 1. Kirim photo/video dengan caption
 2. Reply ke media tersebut dengan: `!add promo`
 3. Filter "promo" siap digunakan
+
+### Menggunakan Filter di Forum Topic
+1. Ketik nama filter langsung di topic: `hongkong`
+2. Bot akan otomatis merespon di topic yang sama
+3. Tidak perlu prefix `!`
 
 ### Clone Filter
 ```
@@ -231,21 +263,29 @@ Akan menampilkan semua non-admin yang pernah mencoba akses bot.
 ## 🔧 Teknologi
 
 - **Node.js** v20+ - Runtime JavaScript
-- **node-telegram-bot-api** - Library untuk Telegram Bot API
+- **grammY** v1.45+ - Telegram Bot framework
+- **PostgreSQL** (Neon cloud) - Database untuk filter & analytics
 - **dotenv** - Environment variable management
 - **Groq API** - AI infrastructure (LLaMA models)
+- **Telegram Bot API 10.2** - Rich Message, Ephemeral messages
 
 ## 📊 Struktur File
 
 ```
-├── index.js                # File utama bot (2200+ lines)
+├── index.js                # Bot initialization, PM2 entry
 ├── package.json           # Dependencies & scripts
+├── schema.sql             # PostgreSQL DDL (filters, analytics, timeouts)
 ├── .env                   # Environment variables (jangan di-commit!)
 ├── .env.example          # Template environment variables
-├── filters.json          # Data filter (auto-generated)
-├── user_analytics.json   # User tracking data (auto-generated)
-├── README.md            # Documentation (this file)
-└── replit.md           # Replit-specific docs
+├── README.md             # Documentation (this file)
+└── src/
+    ├── config.js          # AI models, TELEGRAM_TOPIC_GROUPS, constants
+    ├── db.js              # PostgreSQL pool, all DB queries
+    ├── ai.js              # Groq API, 3-tier cascade, rate limiting
+    ├── handlers.js        # All handlers: filters, AI, admin commands
+    ├── keyboards.js       # Inline keyboard builders
+    ├── utils.js           # Telegram API helpers, Rich Message, pagination
+    └── TopicTracker.js    # Forum topic detection & message routing
 ```
 
 ## 🛡️ Keamanan
@@ -260,14 +300,39 @@ Akan menampilkan semua non-admin yang pernah mencoba akses bot.
 - ✅ AI prompt injection prevention & sanitization
 - ✅ Conversation history limits (prevent memory bloat)
 
-## 🚀 Deploy di Replit
+## 🚀 Deploy
 
-Bot ini sudah dikonfigurasi untuk running di Replit:
+### PM2 (Recommended)
+```bash
+pm2 start index.js --name assistant-bot
+pm2 save
+pm2 startup
+```
 
-1. Fork repository ini ke Replit
-2. Tambahkan Secrets (BOT_TOKEN, OWNER_ID, ADMIN_IDS, GROQ_API_KEY) di Replit Secrets
-3. Klik tombol Run
-4. Bot akan berjalan 24/7 di Replit dengan workflow `telegram-bot`
+### Systemd Service
+```bash
+sudo nano /etc/systemd/system/assistant-bot.service
+```
+```ini
+[Unit]
+Description=Telegram Assistant Bot
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/path/to/Assistant-bot
+ExecStart=/usr/bin/node index.js
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+```
+```bash
+sudo systemctl enable assistant-bot
+sudo systemctl start assistant-bot
+```
 
 ## 🌐 Optimasi untuk Koneksi Lambat
 
@@ -284,7 +349,7 @@ Bot menggunakan konfigurasi khusus untuk koneksi internet lambat:
 
 1. **Auto-delete**: Pesan command akan auto-delete setelah 3-60 detik
 2. **Pagination**: List filter otomatis ter-pagination untuk filter >15 items
-3. **Formatting**: Support semua Telegram formatting via HTML entities conversion
+3. **Formatting**: Support semua Telegram formatting via Rich Message (Bot API 10.2)
 4. **Media Support**: Bisa save semua tipe media yang didukung Telegram
 5. **Backup**: Gunakan `!export` untuk backup filter secara berkala
 6. **Buttons**: Filter bisa menyimpan inline keyboard untuk interaksi kompleks
@@ -294,6 +359,8 @@ Bot menggunakan konfigurasi khusus untuk koneksi internet lambat:
 10. **AI Cooldown**: 3 detik per user untuk prevent abuse
 11. **Model Selection**: AI auto-pilih model terbaik based on complexity
 12. **Conversation History**: Max 10 messages untuk optimal context
+13. **Forum Topics**: Bot auto-detect dan respond di topic yang benar
+14. **No Prefix**: Filter langsung trigger tanpa perlu `!`
 
 ## 🐛 Troubleshooting
 
@@ -301,7 +368,7 @@ Bot menggunakan konfigurasi khusus untuk koneksi internet lambat:
 - ✅ Pastikan BOT_TOKEN benar (dari @BotFather)
 - ✅ Pastikan User ID kamu ada di ADMIN_IDS (di .env)
 - ✅ Check console untuk error messages
-- ✅ Pastikan bot sudah running (cek workflow `telegram-bot`)
+- ✅ Pastikan bot sudah running (cek PM2: `pm2 status`)
 - ✅ Verifikasi dengan `/listadmins` bahwa ID kamu terdaftar
 
 ### Filter tidak terkirim
@@ -330,16 +397,40 @@ Bot menggunakan konfigurasi khusus untuk koneksi internet lambat:
 - ✅ Bot akan auto-retry dengan backoff (max 10 attempts)
 - ✅ Periksa console untuk retry messages
 
-### User Analytics tidak update
-- ✅ Analytics hanya track non-admin users
-- ✅ Check `user_analytics.json` file
-- ✅ Gunakan `/analytics` untuk lihat data
+### Database errors
+- ✅ Pastikan DATABASE_URL benar di .env
+- ✅ Jalankan `schema.sql` ke database: `psql $DATABASE_URL -f schema.sql`
+- ✅ Pastikan SSL mode aktif (Neon butuh `sslmode=require`)
+- ✅ Check apakah database reachable dari server
+
+### Forum Topic tidak work
+- ✅ Pastikan group ID ada di `TELEGRAM_TOPIC_GROUPS` di .env
+- ✅ Pastikan bot punya permission di group
+- ✅ Cek logs untuk topic ID capture: `grep "captureTopic" logs`
 
 ## 📝 Changelog
 
-### v1.1.0 (Current)
-- 🔥 **NEW**: Upgraded to `groq/compound-mini` (Tier 2) - UNLIMITED tokens/day!
-- 🔥 **NEW**: Guard model upgraded to `llama-guard-4-12b` (12B params)
+### v2.0.0 (Current)
+- 🔥 **BREAKING**: Migrated from JSON to PostgreSQL (Neon cloud)
+- 🔥 **BREAKING**: Migrated from node-telegram-bot-api to grammY
+- 🔥 **NEW**: Bot API 10.2 Rich Message untuk semua filter types
+- 🔥 **NEW**: Filter auto-trigger tanpa prefix `!`
+- 🔥 **NEW**: Forum topic support dengan TopicTracker
+- 🔥 **NEW**: Modular src/ structure
+- 🔥 **NEW**: `entitiesToRichSegments` helper untuk entity conversion
+- ✅ Filter trigger: exact match + substring match (word boundary)
+- ✅ `sendFilter` refactored: Rich Message → Standard fallback
+- ✅ `sendRichMessageBlocks` untuk single API call
+- ✅ TopicTracker middleware untuk real-time topic detection
+- ✅ Auto-inject message_thread_id ke semua outgoing messages
+- ✅ User analytics & notification system
+- ✅ Multi-model AI cascade system dengan complexity detection
+- ✅ Smart AI triggering (private vs group chat)
+- ✅ Auto language detection untuk AI responses
+- ✅ Context-aware AI (role-based responses)
+- ✅ Filter knowledge base integration untuk AI
+
+### v1.1.0
 - ✅ User analytics system untuk tracking non-admin access attempts
 - ✅ Notification system (welcome, daily stats, critical alerts)
 - ✅ Multi-model AI cascade system dengan complexity detection
@@ -404,8 +495,9 @@ ISC License - Bebas digunakan untuk keperluan apapun.
 
 ## 🙏 Credits
 
-- [node-telegram-bot-api](https://github.com/yagop/node-telegram-bot-api) - Telegram Bot API wrapper
-- [Telegram Bot API](https://core.telegram.org/bots/api) - Official Telegram Bot API
+- [grammY](https://grammy.dev) - Telegram Bot framework for Node.js
+- [Telegram Bot API](https://core.telegram.org/bots/api) - Official Telegram Bot API (v10.2)
+- [Neon](https://neon.tech) - Serverless PostgreSQL
 - [Groq](https://groq.com) - AI infrastructure platform (LLaMA models)
 - [Meta AI](https://ai.meta.com/) - LLaMA model developers
 
@@ -414,11 +506,12 @@ ISC License - Bebas digunakan untuk keperluan apapun.
 ## 📊 Stats & Performance
 
 **Current Configuration:**
+- Framework: grammY v1.45+
+- Database: PostgreSQL (Neon cloud)
 - AI Models: 3-tier cascade (Premium + Unlimited + Fallback)
-- Filter Capacity: Unlimited (file-based storage)
-- Admin Capacity: Unlimited (env-based)
-- User Analytics: Tracked per non-admin user
-- Auto-delete: 3-60 seconds (configurable)
+- Filter Trigger: Auto (no prefix needed)
+- Rich Message: Bot API 10.2
+- Forum Topics: Auto-detect & route
 - Rate Limit: 5 requests/second per user
 - AI Cooldown: 3 seconds per user
 - Conversation History: Max 10 messages
