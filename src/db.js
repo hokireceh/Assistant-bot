@@ -1,8 +1,12 @@
 const { Pool } = require('pg');
 
+// Dynamic SSL: only enable if DATABASE_URL contains sslmode=require (e.g. Neon)
+const dbUrl = process.env.DATABASE_URL || '';
+const needsSSL = dbUrl.includes('sslmode=require') || dbUrl.includes('ssl=true');
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false }
+  connectionString: dbUrl,
+  ...(needsSSL ? { ssl: { rejectUnauthorized: false } } : {})
 });
 
 pool.on('error', (err) => {
